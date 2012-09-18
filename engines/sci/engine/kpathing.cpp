@@ -1337,15 +1337,17 @@ static void AStar(PathfindingState *s) {
 
 			new_dist = vertex_min->costG + (uint32)sqrt((float)vertex_min->v.sqrDist(vertex->v));
 
-			// When travelling to a vertex on the screen edge, we
-			// add a penalty score to make this path less appealing.
-			// NOTE: If an obstacle has only one vertex on a screen edge,
-			// later SSCI pathfinders will treat that vertex like any
-			// other, while we apply a penalty to paths traversing it.
-			// This difference might lead to problems, but none are
-			// known at the time of writing.
-			if (s->pointOnScreenBorder(vertex->v))
-				new_dist += 10000;
+			// Early pathfinding games penalize vertices that lie on the
+			// screen border, while later games penalize edges that lie on the
+			// screen border. This change happened somewhere between QFG2
+			// and Longbow (exact SCI version still to be determined).
+			if (getSciVersion() == SCI_VERSION_1_EGA_ONLY) {
+				if (vertex != s->vertex_end && s->pointOnScreenBorder(vertex->v))
+					new_dist += 10000;
+			} else {
+				if (!(vertex_min == s->vertex_start && vertex == s->vertex_end) && s->edgeOnScreenBorder(vertex_min->v, vertex->v))
+					new_dist += 10000;
+			}
 
 			if (new_dist < vertex->costG) {
 				vertex->costG = new_dist;
