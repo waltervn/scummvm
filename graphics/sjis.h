@@ -212,6 +212,31 @@ private:
 };
 
 /**
+ * PC-98 ROM based SJIS compatible font.
+ *
+ * This is used in SCI.
+ */
+class FontPC98 : public FontSJISBase {
+public:
+	/**
+	 * Load the ROM data from "FONT.ROM".
+	 */
+	bool loadData();
+private:
+	enum {
+		kFont16x16Chars = 8832,
+		kFont8x16Chars = 256
+	};
+
+	uint8 _fontData16x16[kFont16x16Chars * 32];
+	uint8 _fontData8x16[kFont8x16Chars * 16];
+
+	virtual const uint8 *getCharData(uint16 c) const;
+
+	bool hasFeature(int feat) const;
+};
+
+/**
  * PC-Engine System Card based SJIS compatible font.
  *
  * This is used in LOOM.

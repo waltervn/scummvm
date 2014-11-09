@@ -49,13 +49,12 @@ FontSJIS *FontSJIS::createFont(const Common::Platform platform) {
 		if (ret->loadData())
 			return ret;
 		delete ret;
-	} // TODO: PC98 font rom support
-	/* else if (platform == Common::kPlatformPC98) {
+	} else if (platform == Common::kPlatformPC98) {
 		ret = new FontPC98();
 		if (ret->loadData())
 			return ret;
 		delete ret;
-	}*/
+	}
 
 	// Try ScummVM's font.
 	ret = new FontSjisSVM(platform);
@@ -410,6 +409,69 @@ const uint8 *FontTowns::getCharData(uint16 ch) const {
 
 bool FontTowns::hasFeature(int feat) const {
 	static const int features = kFeatDefault | kFeatOutline | kFeatShadow | kFeatFMTownsShadow | kFeatFlipped;
+	return (features & feat) ? true : false;
+}
+
+// PC-98 ROM font
+
+bool FontPC98::loadData() {
+	Common::SeekableReadStream *data = SearchMan.createReadStreamForMember("FONT.ROM");
+	if (!data)
+		return false;
+
+	data->seek(2048, SEEK_SET);
+	data->read(_fontData8x16, kFont8x16Chars * 16);
+
+	uint8 *dest = _fontData16x16;
+	for (uint i = 0; i < kFont16x16Chars; ++i) {
+		uint8 buf[32];
+
+		data->read(buf, 32);
+		for (uint j = 0; j < 16; ++j) {
+			dest[j * 2] = buf[j];
+			dest[j * 2 + 1] = buf[j + 16];
+		}
+
+		dest += 32;
+	}
+
+	bool retValue = !data->err();
+	delete data;
+	return retValue;
+}
+
+const uint8 *FontPC98::getCharData(uint16 ch) const {
+	if (ch < kFont8x16Chars)
+		return _fontData8x16 + ch * 16;
+	else {
+		uint8 f = ch & 0xFF;
+		uint8 s = ch >> 8;
+
+		if (f < 0x81 || f > 0xee)
+			return 0;
+
+		if (f >= 0xe0)
+			f -= 0x40;
+
+		f -= 0x81;
+
+		if (s < 0x40 || s > 0xfc || s == 0x7f)
+			return 0;
+
+		if (s >= 0x9f)
+			++s;
+		else if (s >= 0x80)
+			--s;
+
+		s -= 0x3f;
+
+		uint16 chunkNum = f * 192 + s;
+		return _fontData16x16 + chunkNum * 32;
+	}
+}
+
+bool FontPC98::hasFeature(int feat) const {
+	static const int features = kFeatDefault;
 	return (features & feat) ? true : false;
 }
 
