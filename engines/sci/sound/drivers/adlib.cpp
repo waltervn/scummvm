@@ -20,6 +20,9 @@
  *
  */
 
+// This is a SCI1 implementation with SCI0 support hacked in
+// FIXME: Add SCI0 voice mapping implementation?
+
 #include "sci/sci.h"
 
 #include "common/file.h"
@@ -39,9 +42,6 @@ namespace Sci {
 #else
 #define STEREO true
 #endif
-
-// FIXME: We don't seem to be sending the polyphony init data, so disable this for now
-#define ADLIB_DISABLE_VOICE_MAPPING
 
 class MidiDriver_AdLib : public MidiDriver_Emulated {
 public:
@@ -292,9 +292,7 @@ void MidiDriver_AdLib::send(uint32 b) {
 			}
 			break;
 		case 0x4b:
-#ifndef ADLIB_DISABLE_VOICE_MAPPING
 			voiceMapping(channel, op2);
-#endif
 			break;
 		case 0x4e:
 			_channels[channel].enableVelocity = op2;
@@ -475,11 +473,7 @@ void MidiDriver_AdLib::noteOn(int channel, int note, int velocity) {
 		}
 	}
 
-#ifdef ADLIB_DISABLE_VOICE_MAPPING
-	int voice = findVoiceBasic(channel);
-#else
 	int voice = findVoice(channel);
-#endif
 
 	if (voice == -1) {
 		debug(3, "ADLIB: failed to find free voice assigned to channel %i", channel);
@@ -487,42 +481,6 @@ void MidiDriver_AdLib::noteOn(int channel, int note, int velocity) {
 	}
 
 	voiceOn(voice, note, velocity);
-}
-
-// FIXME: Temporary, see comment at top of file regarding ADLIB_DISABLE_VOICE_MAPPING
-int MidiDriver_AdLib::findVoiceBasic(int channel) {
-	int voice = -1;
-	int oldestVoice = -1;
-	int oldestAge = -1;
-
-	// Try to find a voice assigned to this channel that is free (round-robin)
-	for (int i = 0; i < kVoices; i++) {
-		int v = (_channels[channel].lastVoice + i + 1) % kVoices;
-
-		if (_voices[v].note == -1) {
-			voice = v;
-			break;
-		}
-
-		// We also keep track of the oldest note in case the search fails
-		if (_voices[v].age > oldestAge) {
-			oldestAge = _voices[v].age;
-			oldestVoice = v;
-		}
-	}
-
-	if (voice == -1) {
-		if (oldestVoice >= 0) {
-			voiceOff(oldestVoice);
-			voice = oldestVoice;
-		} else {
-			return -1;
-		}
-	}
-
-	_voices[voice].channel = channel;
-	_channels[channel].lastVoice = voice;
-	return voice;
 }
 
 int MidiDriver_AdLib::findVoice(int channel) {
@@ -542,7 +500,7 @@ int MidiDriver_AdLib::findVoice(int channel) {
 
 			// We also keep track of the oldest note in case the search fails
 			// Notes started in the current time slice will not be selected
-			if (_voices[v].age > oldestAge) {
+			if (_voices[v].age >= oldestAge) {
 				oldestAge = _voices[v].age;
 				oldestVoice = v;
 			}
@@ -550,7 +508,7 @@ int MidiDriver_AdLib::findVoice(int channel) {
 	}
 
 	if (voice == -1) {
-		if (oldestVoice >= 0) {
+		if (oldestAge != 0) {
 			voiceOff(oldestVoice);
 			voice = oldestVoice;
 		} else {
