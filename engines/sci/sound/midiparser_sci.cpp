@@ -353,6 +353,9 @@ void MidiParser_SCI::sendInitCommands() {
 	// Set initial voice count
 	if (_pSnd) {
 		if (_soundVersion <= SCI_VERSION_0_LATE) {
+			// Reset all voice counts to 0 first to mimic SSCI new sound reset
+			for (int i = 0; i < 15; ++i)
+				sendToDriver(0xB0 | i, 0x4B, 0);
 			for (int i = 0; i < 15; ++i) {
 				byte voiceCount = 0;
 				if (_channelUsed[i]) {
