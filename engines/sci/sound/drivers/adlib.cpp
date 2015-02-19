@@ -114,20 +114,25 @@ private:
 		uint16 pitchWheel;		// Pitch wheel setting (0-16383, 8192 is center)
 		uint8 lastVoice;		// Last voice used for this MIDI channel
 		bool enableVelocity;	// Enable velocity control (SCI0)
+		uint8 voices;			// Number of voices currently used by this channel
+		uint8 mappedVoices;		// Number of voices currently mapped to this channel
 
 		Channel() : patch(0), volume(63), pan(64), holdPedal(0), extraVoices(0),
-					pitchWheel(8192), lastVoice(0), enableVelocity(false) { }
+		            pitchWheel(8192), lastVoice(0), enableVelocity(false), voices(0),
+		            mappedVoices(0) { }
 	};
 
 	struct AdLibVoice {
-		int8 channel;			// MIDI channel that this voice is assigned to or -1
+		int8 channel;			// MIDI channel that is currently using this voice, or -1
+		int8 mappedChannel;		// MIDI channel that this voice is mapped to, or -1
 		int8 note;				// Currently playing MIDI note or -1
 		int patch;				// Currently playing patch or -1
 		uint8 velocity;			// Note velocity
 		bool isSustained;		// Flag indicating a note that is being sustained by the hold pedal
 		uint16 age;				// Age of the current note
 
-		AdLibVoice() : channel(-1), note(-1), patch(-1), velocity(0), isSustained(false), age(0) { }
+		AdLibVoice() : channel(-1), mappedChannel(-1), note(-1), patch(-1), velocity(0),
+		               isSustained(false), age(0) { }
 	};
 
 	bool _stereo;
@@ -139,6 +144,7 @@ private:
 	AdLibVoice _voices[kVoices];
 	byte *_rhythmKeyMap;
 	Common::Array<AdLibPatch> _patches;
+	Common::List<int> _voiceQueue;
 
 	void loadInstrument(const byte *ins);
 	void voiceOn(int voice, int note, int velocity);
@@ -152,11 +158,12 @@ private:
 	void noteOn(int channel, int note, int velocity);
 	void noteOff(int channel, int note);
 	int findVoice(int channel);
+	int findVoiceLateSci11(int channel);
 	void voiceMapping(int channel, int voices);
 	void assignVoices(int channel, int voices);
 	void releaseVoices(int channel, int voices);
 	void donateVoices();
-	int findVoiceBasic(int channel);
+	void queueMoveToBack(int voice);
 	void setVelocityReg(int regOffset, int velocity, int kbScaleLevel, int pan);
 	int calcVelocity(int voice, int op);
 };
@@ -218,6 +225,9 @@ int MidiDriver_AdLib::openAdLib(bool isSCI0) {
 	int rate = _mixer->getOutputRate();
 
 	_stereo = STEREO;
+	// Fill in the voice queue
+	for (int i = 0; i < kVoices; ++i)
+		_voiceQueue.push_back(i);
 
 	debug(3, "ADLIB: Starting driver in %s mode", (isSCI0 ? "SCI0" : "SCI1"));
 	_isSCI0 = isSCI0;
@@ -367,7 +377,7 @@ void MidiDriver_AdLib::voiceMapping(int channel, int voices) {
 	int curVoices = 0;
 
 	for (int i = 0; i < kVoices; i++)
-		if (_voices[i].channel == channel)
+		if (_voices[i].mappedChannel == channel)
 			curVoices++;
 
 	curVoices += _channels[channel].extraVoices;
@@ -386,8 +396,11 @@ void MidiDriver_AdLib::assignVoices(int channel, int voices) {
 	assert(voices > 0);
 
 	for (int i = 0; i < kVoices; i++)
-		if (_voices[i].channel == -1) {
-			_voices[i].channel = channel;
+		if (_voices[i].mappedChannel == -1) {
+			if (_voices[i].note != -1) // Late SCI1.1, stop note on unmapped channel
+				voiceOff(i);
+			_voices[i].mappedChannel = channel;
+			++_channels[channel].mappedVoices;
 			if (--voices == 0)
 				return;
 		}
@@ -405,17 +418,19 @@ void MidiDriver_AdLib::releaseVoices(int channel, int voices) {
 	_channels[channel].extraVoices = 0;
 
 	for (int i = 0; i < kVoices; i++) {
-		if ((_voices[i].channel == channel) && (_voices[i].note == -1)) {
-			_voices[i].channel = -1;
+		if ((_voices[i].mappedChannel == channel) && (_voices[i].note == -1)) {
+			_voices[i].mappedChannel = -1;
+			--_channels[channel].mappedVoices;
 			if (--voices == 0)
 				return;
 		}
 	}
 
 	for (int i = 0; i < kVoices; i++) {
-		if (_voices[i].channel == channel) {
+		if (_voices[i].mappedChannel == channel) {
 			voiceOff(i);
-			_voices[i].channel = -1;
+			_voices[i].mappedChannel = -1;
+			--_channels[channel].mappedVoices;
 			if (--voices == 0)
 				return;
 		}
@@ -426,7 +441,7 @@ void MidiDriver_AdLib::donateVoices() {
 	int freeVoices = 0;
 
 	for (int i = 0; i < kVoices; i++)
-		if (_voices[i].channel == -1)
+		if (_voices[i].mappedChannel == -1)
 			freeVoices++;
 
 	if (freeVoices == 0)
@@ -473,7 +488,12 @@ void MidiDriver_AdLib::noteOn(int channel, int note, int velocity) {
 		}
 	}
 
-	int voice = findVoice(channel);
+	int voice;
+
+	if (_rhythmKeyMap)
+		voice = findVoiceLateSci11(channel);
+	else
+		voice = findVoice(channel);
 
 	if (voice == -1) {
 		debug(3, "ADLIB: failed to find free voice assigned to channel %i", channel);
@@ -492,9 +512,10 @@ int MidiDriver_AdLib::findVoice(int channel) {
 	for (int i = 0; i < kVoices; i++) {
 		int v = (_channels[channel].lastVoice + i + 1) % kVoices;
 
-		if (_voices[v].channel == channel) {
+		if (_voices[v].mappedChannel == channel) {
 			if (_voices[v].note == -1) {
 				voice = v;
+				_voices[voice].channel = channel;
 				break;
 			}
 
@@ -511,13 +532,64 @@ int MidiDriver_AdLib::findVoice(int channel) {
 		if (oldestAge != 0) {
 			voiceOff(oldestVoice);
 			voice = oldestVoice;
+			_voices[voice].channel = channel;
 		} else {
 			return -1;
 		}
 	}
 
 	_channels[channel].lastVoice = voice;
+
 	return voice;
+}
+
+int MidiDriver_AdLib::findVoiceLateSci11(int channel) {
+	Common::List<int>::const_iterator it;
+
+	// Search for unused voice
+	for (it = _voiceQueue.begin(); it != _voiceQueue.end(); ++it) {
+		int voice = *it;
+		if (_voices[voice].note == -1) {
+			_voices[voice].channel = channel;
+			return voice;
+		}
+	}
+
+	// Search for channel with highest excess of voices
+	int maxExceed = 0;
+	int maxExceedChan = 0;
+	for (uint i = 0; i < MIDI_CHANNELS; ++i) {
+		if (_channels[i].voices > _channels[i].mappedVoices) {
+			int exceed = _channels[i].voices - _channels[i].mappedVoices;
+			if (exceed >= maxExceed) {
+				maxExceed = exceed;
+				maxExceedChan = i;
+			}
+		}
+	}
+
+	// Stop voice on channel with highest excess if possible, otherwise stop
+	// note on this channel.
+	int stopChan = channel;
+
+	if (maxExceed > 0)
+		stopChan = maxExceedChan;
+
+	for (it = _voiceQueue.begin(); it != _voiceQueue.end(); ++it) {
+		int voice = *it;
+		if (_voices[voice].channel == stopChan) {
+			voiceOff(voice);
+			_voices[voice].channel = channel;
+			return voice;
+		}
+	}
+
+	return -1;
+}
+
+void MidiDriver_AdLib::queueMoveToBack(int voice) {
+	_voiceQueue.remove(voice);
+	_voiceQueue.push_back(voice);
 }
 
 void MidiDriver_AdLib::noteOff(int channel, int note) {
@@ -534,18 +606,18 @@ void MidiDriver_AdLib::noteOff(int channel, int note) {
 
 void MidiDriver_AdLib::voiceOn(int voice, int note, int velocity) {
 	int channel = _voices[voice].channel;
-	int patch;
+	int patch = _channels[channel].patch;
 
 	_voices[voice].age = 0;
+	++_channels[channel].voices;
+	queueMoveToBack(voice);
 
 	if ((channel == 9) && _rhythmKeyMap) {
 		patch = CLIP(note, 27, 88) + 101;
-	} else {
-		patch = _channels[channel].patch;
 	}
 
 	// Set patch if different from current patch
-	if (patch != _voices[voice].patch)
+	if (patch != _voices[voice].patch && _playSwitch)
 		setPatch(voice, patch);
 
 	_voices[voice].velocity = velocity;
@@ -553,10 +625,14 @@ void MidiDriver_AdLib::voiceOn(int voice, int note, int velocity) {
 }
 
 void MidiDriver_AdLib::voiceOff(int voice) {
+	int channel = _voices[voice].channel;
+
 	_voices[voice].isSustained = false;
 	setNote(voice, _voices[voice].note, 0);
 	_voices[voice].note = -1;
 	_voices[voice].age = 0;
+	queueMoveToBack(voice);
+	--_channels[channel].voices;
 }
 
 void MidiDriver_AdLib::setNote(int voice, int note, bool key) {
@@ -565,9 +641,8 @@ void MidiDriver_AdLib::setNote(int voice, int note, bool key) {
 	float delta;
 	int bend = _channels[channel].pitchWheel;
 
-	if ((channel == 9) && _rhythmKeyMap) {
+	if ((channel == 9) && _rhythmKeyMap)
 		note = _rhythmKeyMap[CLIP(note, 27, 88) - 27];
-	}
 
 	_voices[voice].note = note;
 
