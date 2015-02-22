@@ -157,7 +157,8 @@ private:
 	void renewNotes(int channel, bool key);
 	void noteOn(int channel, int note, int velocity);
 	void noteOff(int channel, int note);
-	int findVoice(int channel);
+	int findVoiceSci0(int channel);
+	int findVoiceSci1(int channel);
 	int findVoiceLateSci11(int channel);
 	void voiceMapping(int channel, int voices);
 	void assignVoices(int channel, int voices);
@@ -307,6 +308,8 @@ void MidiDriver_AdLib::send(uint32 b) {
 			break;
 		case 0x4b:
 			voiceMapping(channel, op2);
+			for (int i = 0; i < kVoices; ++i) debugN("%i ", _voices[i].mappedChannel);
+			debug("%s", "");
 			break;
 		case 0x4e:
 			_channels[channel].enableVelocity = op2;
@@ -409,7 +412,9 @@ void MidiDriver_AdLib::assignVoices(int channel, int voices) {
 				return;
 		}
 
-	_channels[channel].extraVoices += voices;
+	// SCI0 doesn't keep track of how many more voices a channel requested
+	if (!_isSCI0)
+		_channels[channel].extraVoices += voices;
 }
 
 void MidiDriver_AdLib::releaseVoices(int channel, int voices) {
@@ -421,18 +426,22 @@ void MidiDriver_AdLib::releaseVoices(int channel, int voices) {
 	voices -= _channels[channel].extraVoices;
 	_channels[channel].extraVoices = 0;
 
-	for (int i = 0; i < kVoices; i++) {
-		if ((_voices[i].mappedChannel == channel) && (_voices[i].note == -1)) {
-			_voices[i].mappedChannel = -1;
-			--_channels[channel].mappedVoices;
-			if (--voices == 0)
-				return;
+	// SCI0 doesn't search for unused voices first
+	if (!_isSCI0) {
+		for (int i = 0; i < kVoices; i++) {
+			if ((_voices[i].mappedChannel == channel) && (_voices[i].note == -1)) {
+				_voices[i].mappedChannel = -1;
+				--_channels[channel].mappedVoices;
+				if (--voices == 0)
+					return;
+			}
 		}
 	}
 
 	for (int i = 0; i < kVoices; i++) {
 		if (_voices[i].mappedChannel == channel) {
-			voiceOff(i);
+			if (_voices[i].note != -1) // Extra check for SCI0
+				voiceOff(i);
 			_voices[i].mappedChannel = -1;
 			--_channels[channel].mappedVoices;
 			if (--voices == 0)
@@ -496,8 +505,10 @@ void MidiDriver_AdLib::noteOn(int channel, int note, int velocity) {
 
 	if (_rhythmKeyMap)
 		voice = findVoiceLateSci11(channel);
+	else if (_isSCI0)
+		voice = findVoiceSci0(channel);
 	else
-		voice = findVoice(channel);
+		voice = findVoiceSci1(channel);
 
 	if (voice == -1) {
 		debug(3, "ADLIB: failed to find free voice assigned to channel %i", channel);
@@ -507,7 +518,26 @@ void MidiDriver_AdLib::noteOn(int channel, int note, int velocity) {
 	voiceOn(voice, note, velocity);
 }
 
-int MidiDriver_AdLib::findVoice(int channel) {
+int MidiDriver_AdLib::findVoiceSci0(int channel) {
+	for (int i = 0; i < kVoices; ++i) {
+		if (_voices[i].mappedChannel == channel && _voices[i].note == -1) {
+			_voices[i].channel = channel;
+			return i;
+		}
+	}
+
+	for (int i = 0; i < kVoices; ++i) {
+		if (_voices[i].mappedChannel == channel) {
+			voiceOff(i);
+			_voices[i].channel = channel;
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+int MidiDriver_AdLib::findVoiceSci1(int channel) {
 	int voice = -1;
 	int oldestVoice = -1;
 	uint32 oldestAge = 0;
