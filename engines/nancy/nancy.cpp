@@ -102,9 +102,9 @@ Common::Error NancyEngine::run() {
 	SearchMan.addSubDirectoryMatching(gameDataDir, "hdvideo");
 	SearchMan.addSubDirectoryMatching(gameDataDir, "cdvideo");
 
-	Common::SeekableReadStream *cabStream = SearchMan.createReadStreamForMember("data1.hdr");
-	if (cabStream)
-		SearchMan.add("data1.hdr", Common::makeInstallShieldArchive(cabStream));
+	Common::Archive *cab = Common::makeInstallShieldArchive("data");
+	if (cab)
+		SearchMan.add("data1.hdr", cab);
 
 //	_mouse = new MouseHandler(this);
 	_res = new ResourceManager(this);

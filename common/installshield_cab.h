@@ -36,7 +36,7 @@ class SeekableReadStream;
  *
  * May return 0 in case of a failure.
  */
-Archive *makeInstallShieldArchive(SeekableReadStream *stream, DisposeAfterUse::Flag disposeAfterUse = DisposeAfterUse::YES);
+Archive *makeInstallShieldArchive(const Common::String &baseName);
 
 } // End of namespace Common
 

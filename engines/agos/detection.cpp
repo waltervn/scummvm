@@ -273,10 +273,9 @@ void AGOSEngine::loadArchives() {
 	if (getFeatures() & GF_PACKED) {
 		for (ag = _gameDescription->desc.filesDescriptions; ag->fileName; ag++) {
 			if (!SearchMan.hasArchive(ag->fileName)) {
-				Common::SeekableReadStream *stream = SearchMan.createReadStreamForMember(ag->fileName);
-
-				if (stream)
-					SearchMan.add(ag->fileName, Common::makeInstallShieldArchive(stream, DisposeAfterUse::YES), ag->fileType);
+				Common::Archive *cab = Common::makeInstallShieldArchive("data");
+				if (cab)
+					SearchMan.add(ag->fileName, cab, ag->fileType);
 			}
 		}
 	}
