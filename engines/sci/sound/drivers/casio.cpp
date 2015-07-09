@@ -46,7 +46,7 @@ public:
 	void send(uint32 b);
 	bool hasRhythmChannel() const { return false; } // Depends on play flag
 	byte getPlayId() const;
-	int getPolyphony() const { return 10; }
+	int getPolyphony() const { return 16; } // CT-460 driver reports 10, MT-540 reports 16
 	int getFirstChannel() const;
 	int getLastChannel() const;
 	void setVolume(byte volume);
@@ -84,7 +84,7 @@ private:
 	bool _playSwitch;
 };
 
-const uint MidiPlayer_Casio::_polyphony[MidiPlayer_Casio::kVoices] = { 6, 4, 2, 6 };
+const uint MidiPlayer_Casio::_polyphony[MidiPlayer_Casio::kVoices] = { 6, 4, 2, 4 };
 
 MidiPlayer_Casio::MidiPlayer_Casio(SciVersion version, int patchNr, int percPatch, int bassPatch) :
 		MidiPlayer(version),
