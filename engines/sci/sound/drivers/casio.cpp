@@ -50,7 +50,7 @@ public:
 	int getFirstChannel() const;
 	int getLastChannel() const;
 	void setVolume(byte volume);
-	int getVolume();
+	int getVolume() { return _masterVolume; }
 	void playSwitch(bool play);
 	void onNewSound(uint16 channels);
 
@@ -80,6 +80,8 @@ private:
 	int8 _rhythmVoice;
 	int8 _bassVoice;
 	int8 _prevSentCommand;
+	byte _masterVolume;
+	bool _playSwitch;
 };
 
 const uint MidiPlayer_Casio::_polyphony[MidiPlayer_Casio::kVoices] = { 6, 4, 2, 6 };
@@ -101,7 +103,9 @@ MidiPlayer_Casio::MidiPlayer_Casio(SciVersion version, int patchNr, int percPatc
 		_voiceChannel(),
 		_rhythmVoice(),
 		_bassVoice(),
-		_prevSentCommand() {
+		_prevSentCommand(),
+		_masterVolume(15),
+		_playSwitch(true) {
 	MidiDriver::DeviceHandle dev = MidiDriver::detectDevice(MDT_MIDI);
 	_driver = MidiDriver::createMidi(dev);
 }
@@ -178,6 +182,9 @@ byte MidiPlayer_Casio::mapNote(byte voice, byte note) {
 }
 
 void MidiPlayer_Casio::noteOn(byte voice, byte note, byte velocity) {
+	if (!_playSwitch || _masterVolume == 0)
+		return;
+
 	if (velocity == 0)
 		return noteOff(voice, note);
 
@@ -193,6 +200,9 @@ void MidiPlayer_Casio::noteOn(byte voice, byte note, byte velocity) {
 }
 
 void MidiPlayer_Casio::noteOff(byte voice, byte note) {
+	if (!_playSwitch || _masterVolume == 0)
+		return;
+
 	note = mapNote(voice, note);
 
 	for (uint i = 0; i < _polyphony[voice]; ++i) {
@@ -315,13 +325,19 @@ int MidiPlayer_Casio::getLastChannel() const {
 }
 
 void MidiPlayer_Casio::setVolume(byte volume) {
-}
+	_masterVolume = volume;
 
-int MidiPlayer_Casio::getVolume() {
-	return 15;
+	if (_masterVolume == 0)
+		for (uint i = 0; i < kVoices; ++i)
+			allNotesOff(i);
 }
 
 void MidiPlayer_Casio::playSwitch(bool play) {
+	_playSwitch = play;
+
+	if (!_playSwitch)
+		for (uint i = 0; i < kVoices; ++i)
+			allNotesOff(i);
 }
 
 int MidiPlayer_Casio::open(ResourceManager *resMan) {
