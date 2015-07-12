@@ -137,6 +137,8 @@ extern MidiPlayer *MidiPlayer_MacSci1_create(SciVersion version);
 extern MidiPlayer *MidiPlayer_Midi_create(SciVersion version);
 extern MidiPlayer *MidiPlayer_Fb01_create(SciVersion version);
 extern MidiPlayer *MidiPlayer_FMTowns_create(SciVersion version);
+extern MidiPlayer *MidiPlayer_CasioCT460_create(SciVersion version);
+extern MidiPlayer *MidiPlayer_CasioMT540_create(SciVersion version);
 
 } // End of namespace Sci
 
