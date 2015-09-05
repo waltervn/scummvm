@@ -328,16 +328,22 @@ void MidiDriver_AmigaSci1::convertSamples() {
 			if (READ_BE_UINT16(wave + WAVE_IS_SIGNED) == 0) {
 				WRITE_BE_UINT16(wave + WAVE_IS_SIGNED, -1);
 
-				// The original code uses a signed 16-bit type here, while some samples
-				// exceed INT_MAX in size
 				int endOffset = READ_BE_UINT16(wave + WAVE_PHASE1_END);
 				endOffset += 224; // Additional samples are present to facilitate easy looping
 
-				byte *samples = wave + WAVE_SIZEOF;
+				// The original code uses a signed 16-bit type here, while some samples
+				// exceed INT_MAX in size. In this case, it will change one "random" byte
+				// in memory and then stop converting. We simulate this behaviour here, minus
+				// the memory corruption.
+				// The "maincrnh" instrument in Castle of Dr. Brain has an incorrect signedness
+				// flag, but is not actually converted because of its size.
+				if (endOffset <= 0x8000) {
+					byte *samples = wave + WAVE_SIZEOF;
 
-				do {
-					samples[endOffset] -= 0x80;
-				} while (--endOffset >= 0);
+					do {
+						samples[endOffset] -= 0x80;
+					} while (--endOffset >= 0);
+				}
 			}
 
 			noteRange += NOTE_RANGE_SIZE;
