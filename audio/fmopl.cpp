@@ -42,13 +42,18 @@ namespace ALSA {
 } // End of namespace ALSA
 #endif // USE_ALSA
 
+namespace FPGA {
+	OPL *create(Config::OplType type);
+}
+
 // Config implementation
 
 enum OplEmulator {
 	kAuto = 0,
 	kMame = 1,
 	kDOSBox = 2,
-	kALSA = 3
+	kALSA = 3,
+	kFPGA = 4
 };
 
 OPL::OPL() {
@@ -66,6 +71,7 @@ const Config::EmulatorDescription Config::_drivers[] = {
 #ifdef USE_ALSA
 	{ "alsa", _s("ALSA Direct FM"), kALSA, kFlagOpl2 | kFlagDualOpl2 | kFlagOpl3 },
 #endif
+	{ "fpga", _s("OPL3 FPGA"), kFPGA, kFlagOpl2 | kFlagDualOpl2 | kFlagOpl3 },
 	{ 0, 0, 0, 0 }
 };
 
@@ -123,7 +129,7 @@ Config::DriverId Config::detect(OplType type) {
 		} else {
 			// Else we will output a warning and just
 			// return that no valid driver is found.
-			warning("Your selected OPL driver \"%s\" does not support type %d emulation, which is requested by your game", _drivers[drv].description, type);
+			warning("Your selected OPL driver \"%s\" does not support type %d emulation, which is requested by your game", driverDesc->description, type);
 			return -1;
 		}
 	}
@@ -182,6 +188,9 @@ OPL *Config::create(DriverId driver, OplType type) {
 	case kALSA:
 		return ALSA::create(type);
 #endif
+
+	case kFPGA:
+		return FPGA::create(type);
 
 	default:
 		warning("Unsupported OPL emulator %d", driver);
