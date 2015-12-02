@@ -55,6 +55,7 @@ OPL::OPL(Config::OplType type) : _type(type), _midi(nullptr) {
 
 OPL::~OPL() {
 	stop();
+	reset();
 
 	if (_midi->isOpen())
 		_midi->close();
@@ -82,7 +83,7 @@ MidiDriver::DeviceHandle OPL::getDeviceByName(const Common::String &name) {
 bool OPL::init() {
 	// This requires that MIDI backends report device names. Currently
 	// the CoreMIDI backend doesn't do this
-	MidiDriver::DeviceHandle dev = getDeviceByName("OPL3 FPGA");
+	MidiDriver::DeviceHandle dev = getDeviceByName("MIDI function");
 	if (!dev) {
 		warning("Could not find OPL3 FPGA MIDI device");
 		return false;
@@ -100,19 +101,23 @@ bool OPL::init() {
 void OPL::reset() {
 	index[0] = index[1] = 0;
 
-	// Send a special sysEx to reset the OPL3
-	byte sysEx[4] = { 0x7d, 0x7f, 0x7f, 0x7f };
-	_midi->sysEx(sysEx, 4);
+	for (int i = 0; i < 256; ++i) {
+		writeOplReg(0, i, 0);
+		writeOplReg(1, i, 0);
+	}
+
+	// Unmute output
+	writeOplReg(1, 0x02, 1);
+
+	if (_type != Config::kOpl2)
+		writeOplReg(1, 0x05, 0x01);
 
 	if (_type == Config::kDualOpl2) {
-		// Here we set up the OPL3 for dual OPL2 mode
-		writeOplReg(1, 0x05, 0x01); // Enable OPL3
-
-		// Ensure panning bits are set (see writeOplReg)
+		// Here we set up the OPL3 for dual OPL2 panning
 		for (int i = 0; i < 9; ++i)
-			writeOplReg(0, 0xc0 | i, 0);
+			writeOplReg(0, 0xc0 | i, 0x10);
 		for (int i = 0; i < 9; ++i)
-			writeOplReg(1, 0xc0 | i, 0);
+			writeOplReg(1, 0xc0 | i, 0x20);
 	}
 }
 
@@ -172,8 +177,8 @@ void OPL::writeReg(int r, int v) {
 }
 
 void OPL::writeOplReg(int c, int r, int v) {
-	// Set panning bits for dual OPL2 mode
-	if (_type == Config::kDualOpl2 && (r & 0xe0) == 0xc0)
+	// Maintain panning bits for dual OPL2 mode
+	if (_type == Config::kDualOpl2 && r >= 0xc0 && r <= 0xc8)
 		v |= (c ? 0x20 : 0x10);
 
 	// SysEx method
@@ -183,14 +188,6 @@ void OPL::writeOplReg(int c, int r, int v) {
 	sysEx[2] = ((r & 3) << 5) | (v >> 3);
 	sysEx[3] = (v & 7) << 4;
 	_midi->sysEx(sysEx, 4);
-
-#if 0
-	// NRPN method
-	_midi->send(0x63b0 | ((c & 1) << 17) | ((r >> 7) << 16));
-	_midi->send(0x62b0 | ((r & 0x7f) << 16));
-	_midi->send(0x06b0 | ((v >> 7) << 16));
-	_midi->send(0x26b0 | (v & 0x7f) << 16);
-#endif
 }
 
 OPL *create(Config::OplType type) {
