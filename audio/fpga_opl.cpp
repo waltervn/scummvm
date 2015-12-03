@@ -101,24 +101,68 @@ bool OPL::init() {
 void OPL::reset() {
 	index[0] = index[1] = 0;
 
-	for (int i = 0; i < 256; ++i) {
-		writeOplReg(0, i, 0);
-		writeOplReg(1, i, 0);
+	// Reset code based on OPL3 Synth Driver by James Alan Nguyen
+	writeOplReg(1, 0x05, 0x01); // OPL3 Enable
+	writeOplReg(0, 0x01, 0x20); // Test Register
+	writeOplReg(0, 0x02, 0x20); // Timer 1
+	writeOplReg(0, 0x03, 0x00); // Timer 2
+	writeOplReg(0, 0x04, 0x00); // IRQ Mask Clear
+	writeOplReg(1, 0x04, 0x00); // 4-op mode disable
+	writeOplReg(0, 0x08, 0x00); // Keyboard split
+
+	for (int i = 0; i < 9; i++) {
+		writeOplReg(0, 0xc0 | i, 0x00);
+		writeOplReg(1, 0xc0 | i, 0x00);
 	}
 
-	// Unmute output
-	writeOplReg(1, 0x02, 1);
+	for (int i = 0; i < 0x16; i++) {
+		if ((i & 0x07) >= 0x06)
+			continue;
 
-	if (_type != Config::kOpl2)
-		writeOplReg(1, 0x05, 0x01);
+		writeOplReg(0, 0x40 | i, 0x3f);
+		writeOplReg(1, 0x40 | i, 0x3f);
 
-	if (_type == Config::kDualOpl2) {
+		writeOplReg(0, 0x80 | i, 0xff);
+		writeOplReg(1, 0x80 | i, 0xff);
+		writeOplReg(0, 0x60 | i, 0xff);
+		writeOplReg(1, 0x60 | i, 0xff);
+
+		writeOplReg(0, 0x20 | i, 0x00);
+		writeOplReg(1, 0x20 | i, 0x00);
+
+		writeOplReg(0, 0xe0 | i, 0x00);
+		writeOplReg(1, 0xe0 | i, 0x00);
+	}
+
+	writeOplReg(0, 0xbd, 0x00);
+
+	for (int i = 0; i < 9; i++) {
+		writeOplReg(0, 0xb0 | i, 0x00);
+		writeOplReg(1, 0xb0 | i, 0x00);
+		writeOplReg(0, 0xa0 | i, 0x00);
+		writeOplReg(1, 0xa0 | i, 0x00);
+	}
+
+	for (int i = 0x40; i < 0xa0; i++) {
+		if ((i & 0x07) >= 0x06 || (i & 0x1f) >= 0x18)
+			continue;
+
+		writeOplReg(0, 0x00 | i, 0x00);
+		writeOplReg(1, 0x00 | i, 0x00);
+	}
+
+	if (_type == Config::kOpl2)
+		writeOplReg(1, 0x05, 0x00);
+	else if (_type == Config::kDualOpl2) {
 		// Here we set up the OPL3 for dual OPL2 panning
 		for (int i = 0; i < 9; ++i)
 			writeOplReg(0, 0xc0 | i, 0x10);
 		for (int i = 0; i < 9; ++i)
 			writeOplReg(1, 0xc0 | i, 0x20);
 	}
+
+	// Unmute output
+	writeOplReg(1, 0x02, 1);
 }
 
 void OPL::write(int port, int val) {
