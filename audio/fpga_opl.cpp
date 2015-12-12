@@ -57,7 +57,7 @@ OPL::~OPL() {
 	stop();
 	reset();
 
-	if (_midi->isOpen())
+	if (_midi && _midi->isOpen())
 		_midi->close();
 
 	delete _midi;
@@ -94,6 +94,16 @@ bool OPL::init() {
 		return false;
 
 	reset();
+
+	if (_type == Config::kOpl2)
+		writeOplReg(1, 0x05, 0x00);
+	else if (_type == Config::kDualOpl2) {
+		// Here we set up the OPL3 for dual OPL2 panning
+		for (int i = 0; i < 9; ++i)
+			writeOplReg(0, 0xc0 | i, 0);
+		for (int i = 0; i < 9; ++i)
+			writeOplReg(1, 0xc0 | i, 0);
+	}
 
 	return true;
 }
@@ -151,17 +161,7 @@ void OPL::reset() {
 		writeOplReg(1, 0x00 | i, 0x00);
 	}
 
-	if (_type == Config::kOpl2)
-		writeOplReg(1, 0x05, 0x00);
-	else if (_type == Config::kDualOpl2) {
-		// Here we set up the OPL3 for dual OPL2 panning
-		for (int i = 0; i < 9; ++i)
-			writeOplReg(0, 0xc0 | i, 0x10);
-		for (int i = 0; i < 9; ++i)
-			writeOplReg(1, 0xc0 | i, 0x20);
-	}
-
-	// Unmute output
+	// Unmute output (OPL3-FPGA extension)
 	writeOplReg(1, 0x02, 1);
 }
 
@@ -222,16 +222,18 @@ void OPL::writeReg(int r, int v) {
 
 void OPL::writeOplReg(int c, int r, int v) {
 	// Maintain panning bits for dual OPL2 mode
-	if (_type == Config::kDualOpl2 && r >= 0xc0 && r <= 0xc8)
+	if (_type == Config::kDualOpl2 && r >= 0xc0 && r <= 0xc8) {
+		v &= 0xf;
 		v |= (c ? 0x20 : 0x10);
+	}
 
-	// SysEx method
-	byte sysEx[4];
-	sysEx[0] = 0x7d; // Manufacturer ID (Educational Use)
-	sysEx[1] = ((c & 1) << 6) | (r >> 2);
-	sysEx[2] = ((r & 3) << 5) | (v >> 3);
-	sysEx[3] = (v & 7) << 4;
-	_midi->sysEx(sysEx, 4);
+	byte msg[3];
+
+	msg[0] = (0x90 | ((v >> 7) << 2) | (c << 1) | (r >> 7));
+	msg[1] = r & 0x7f;
+	msg[2] = v & 0x7f;
+
+	_midi->send((msg[2] << 16) | (msg[1] << 8) | (msg[0]));
 }
 
 OPL *create(Config::OplType type) {
