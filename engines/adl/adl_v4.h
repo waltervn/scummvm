@@ -101,6 +101,12 @@ protected:
 	Common::SeekableReadStream *_itemPicIndex;
 };
 
+class AdlEngine_v4_PC : public AdlEngine_v4 {
+public:
+	AdlEngine_v4_PC(OSystem *syst, const AdlGameDescription *gd) :
+		AdlEngine_v4(syst, gd) { }
+};
+
 } // End of namespace Adl
 
 #endif

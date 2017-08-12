@@ -192,6 +192,21 @@ static const AdlGameDescription gameDiskDescriptions[] = {
 		GAME_TYPE_HIRES2,
 		GAME_VER_NONE
 	},
+	{ // Adventure in Serenia - PC Booter
+		{
+			"hires2", 0,
+			{
+				{ "serenia", 0, "30d91f5633f5f4e0231668ad87639e51", 163840 },
+				AD_LISTEND
+			},
+			Common::EN_ANY,
+			Common::kPlatformDOS, // Not actually DOS, but there's no PC Booter platform
+			ADGF_UNSTABLE,
+			GUIO0()
+		},
+		GAME_TYPE_HIRES2,
+		GAME_VER_NONE
+	},
 	{ // Hi-Res Adventure #0: Mission Asteroid - Apple II - Roberta Williams Anthology
 		{
 			"hires0", 0,
@@ -604,6 +619,7 @@ ADDetectedGames AdlMetaEngine::detectGame(const Common::FSNode &parent, const Fi
 
 Engine *HiRes1Engine_create(OSystem *syst, const AdlGameDescription *gd);
 Engine *HiRes2Engine_create(OSystem *syst, const AdlGameDescription *gd);
+Engine *HiRes2Engine_PC_create(OSystem *syst, const AdlGameDescription *gd);
 Engine *HiRes0Engine_create(OSystem *syst, const AdlGameDescription *gd);
 Engine *HiRes3Engine_create(OSystem *syst, const AdlGameDescription *gd);
 Engine *HiRes4Engine_create(OSystem *syst, const AdlGameDescription *gd);
@@ -621,7 +637,10 @@ bool AdlMetaEngine::createInstance(OSystem *syst, Engine **engine, const ADGameD
 		*engine = HiRes1Engine_create(syst, adlGd);
 		break;
 	case GAME_TYPE_HIRES2:
-		*engine = HiRes2Engine_create(syst, adlGd);
+		if (gd->platform == Common::kPlatformDOS)
+			*engine = HiRes2Engine_PC_create(syst, adlGd);
+		else
+			*engine = HiRes2Engine_create(syst, adlGd);
 		break;
 	case GAME_TYPE_HIRES0:
 		*engine = HiRes0Engine_create(syst, adlGd);

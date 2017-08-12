@@ -16,6 +16,7 @@ MODULE_OBJS := \
 	hires4.o \
 	hires5.o \
 	hires6.o \
+	hirespc.o \
 	sound.o
 
 MODULE_DIRS += \
