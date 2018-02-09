@@ -196,7 +196,7 @@ static const AdlGameDescription gameDiskDescriptions[] = {
 		{
 			"hires2", 0,
 			{
-				{ "serenia", 0, "30d91f5633f5f4e0231668ad87639e51", 163840 },
+				{ "serenia", 1, "30d91f5633f5f4e0231668ad87639e51", 163840 },
 				AD_LISTEND
 			},
 			Common::EN_ANY,

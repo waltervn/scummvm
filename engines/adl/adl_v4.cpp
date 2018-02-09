@@ -582,4 +582,277 @@ int AdlEngine_v4::o4_setRoomPic(ScriptEnv &e) {
 	return 2;
 }
 
+void AdlEngine_v4_PC::loadItemDescriptions(Common::SeekableReadStream &stream, byte count) {
+	int32 startPos = stream.pos();
+	uint16 baseAddr = stream.readUint16LE();
+
+	// This code assumes that the first pointer points to a string that
+	// directly follows the pointer table
+	assert(baseAddr != 0);
+	baseAddr -= count * 2;
+
+	for (uint i = 0; i < count; ++i) {
+		stream.seek(startPos + i * 2);
+		uint16 offset = stream.readUint16LE();
+
+		stream.seek(startPos + offset - baseAddr);
+		byte len = stream.readByte();
+		Common::String desc;
+
+		for (uint j = 0; j < len; ++j)
+			desc += stream.readByte();
+
+		_itemDesc.push_back(desc);
+	}
+
+	if (stream.eos() || stream.err())
+		error("Error loading item descriptions");
+}
+
+void AdlEngine_v4_PC::loadRegionMetaData(Common::SeekableReadStream &stream) {
+	if (stream.size() < 16)
+		error("No regions found");
+
+	// Region 0 does not exist
+	const uint regions = stream.size() / 8 - 1;
+	stream.seek(8);
+
+	for (uint r = 0; r < regions; ++r) {
+		RegionInitDataOffset initOfs;
+		initOfs.track = stream.readByte();
+		initOfs.sector = stream.readByte();
+		initOfs.offset = stream.readUint16LE();
+		initOfs.volume = stream.readByte();
+
+		_regionInitDataOffsets.push_back(initOfs);
+
+		RegionLocation loc;
+		loc.track = stream.readByte();
+		loc.sector = stream.readByte();
+
+		_regionLocations.push_back(loc);
+		_regionRoomCounts.push_back(stream.readByte());
+	}
+
+	if (stream.eos() || stream.err())
+		error("Failed to read region meta data");
+}
+
+void AdlEngine_v4_PC::fixupDiskOffset(byte &track, byte &sector) const {
+	if (_state.region == 0) {
+		// Hardcoded item pic track offset
+		track += 32;
+		return;
+	}
+
+	sector += _regionLocations[_state.region - 1].sector;
+	if (sector > 8) {
+		sector -= 8;
+		++track;
+	}
+
+	track += _regionLocations[_state.region - 1].track;
+}
+
+DataBlockPtr AdlEngine_v4_PC::readDataBlockPtr(Common::ReadStream &f) const {
+	byte track = f.readByte();
+	byte sector = f.readByte();
+	uint16 offset = f.readUint16LE();
+
+	if (f.eos() || f.err())
+		error("Error reading DataBlockPtr");
+
+	if (track == 0 && sector == 0 && offset == 0)
+		return DataBlockPtr();
+
+	fixupDiskOffset(track, sector);
+
+	return DataBlockPtr(new DataBlock_PC(_disk, track, sector, offset));
+}
+
+void AdlEngine_v4_PC::loadWords(Common::ReadStream &stream) {
+	uint index = 1;
+
+	_nouns.clear();
+	_verbs.clear();
+	_priNouns.clear();
+	_priVerbs.clear();
+
+	while (1) {
+		byte buf[IDI_WORD_SIZE];
+
+		buf[0] = stream.readByte();
+
+		if (buf[0] == 0xff)
+			break;
+		else if (buf[0] == 0xfe) {
+			++index;
+			continue;
+		}
+
+		if (stream.read(buf + 1, IDI_WORD_SIZE - 1) < IDI_WORD_SIZE - 1)
+			error("Error reading word list");
+
+		Common::String word((char *)buf, IDI_WORD_SIZE);
+
+		if (!_nouns.contains(word)) {
+			_nouns[word] = index;
+			_verbs[word] = index;
+		}
+
+		if (_priNouns.size() == index - 1) {
+			_priNouns.push_back(word);
+			_priVerbs.push_back(word);
+		}
+	}
+
+	// If there are gaps in the list, we will error out here
+	if (_priNouns.size() != index)
+		error("Error reading word list");
+}
+
+void AdlEngine_v4_PC::loadItems(Common::ReadStream &stream) {
+	byte id;
+	while ((id = stream.readByte()) != 0xff && !stream.eos() && !stream.err()) {
+		Item item;
+
+		item.id = id;
+		item.noun = stream.readByte();
+		item.picture = stream.readByte();
+		item.region = stream.readByte();
+		item.room = stream.readByte();
+		item.state = stream.readByte();
+		item.description = stream.readByte();
+		item.position.x = stream.readByte();
+		item.position.y = stream.readByte();
+
+		// Flag to keep track of what has been drawn on the screen
+		stream.readByte();
+
+		byte picListSize = stream.readByte();
+
+		stream.readByte(); // Struct size
+
+		for (uint i = 0; i < picListSize; ++i)
+			item.roomPictures.push_back(stream.readByte());
+
+		_state.items.push_back(item);
+	}
+
+	if (stream.eos() || stream.err())
+		error("Error loading items");
+}
+
+void AdlEngine_v4_PC::readCommands(Common::ReadStream &stream, Commands &commands) {
+	commands.clear();
+
+	while (1) {
+		Command command;
+		command.room = stream.readByte();
+
+		if (command.room == 0xff)
+			return;
+
+		command.verb = stream.readByte();
+		command.noun = stream.readByte();
+
+		byte scriptSize = stream.readByte() - 4;
+
+		command.numCond = 0;
+		command.numAct = 0;
+
+		for (uint i = 0; i < scriptSize; ++i)
+			command.script.push_back(stream.readByte());
+
+		if (stream.eos() || stream.err())
+			error("Failed to read commands");
+
+		if (command.script[0] == 0xff && command.script[1] == IDO_ACT_SAVE) {
+			_saveVerb = command.verb;
+			_saveNoun = command.noun;
+		}
+
+		if (command.script[0] == 0xff && command.script[1] == IDO_ACT_LOAD) {
+			_restoreVerb = command.verb;
+			_restoreNoun = command.noun;
+		}
+
+		commands.push_back(command);
+	}
+}
+
+void AdlEngine_v4_PC::loadRegion(byte region) {
+	if (_currentVolume != _regionInitDataOffsets[region - 1].volume) {
+		insertDisk(_regionInitDataOffsets[region - 1].volume);
+
+		// FIXME: This shouldn't be needed, but currently is, due to
+		// implementation choices made earlier on for DataBlockPtr and DiskImage.
+		_state.region = 0; // To avoid region offset being applied
+		_itemPics.clear();
+		_itemPicIndex->seek(0);
+		loadItemPictures(*_itemPicIndex, _itemPicIndex->size() / 5);
+	}
+
+	_state.region = region;
+
+	byte track = _regionInitDataOffsets[region - 1].track;
+	byte sector = _regionInitDataOffsets[region - 1].sector;
+	uint offset = _regionInitDataOffsets[region - 1].offset;
+
+	fixupDiskOffset(track, sector);
+
+	for (uint block = 0; block < 6; ++block) {
+		StreamPtr stream(DataBlock_PC(_disk, track, sector, offset).createReadStream());
+		const uint size = stream->size();
+
+		switch (block) {
+		case 0: {
+			// Messages
+			_messages.clear();
+			loadMessages(*stream, size / 4);
+			break;
+		}
+		case 1: {
+			// Global pics
+			_pictures.clear();
+			loadPictures(*stream);
+			break;
+		}
+		case 2:
+			// There's only one word list, so we load both verbs and nouns with it
+			loadWords(*stream);
+			break;
+		case 3: {
+			// Rooms
+			uint count = size / 14 - 1;
+			stream->skip(14); // Skip invalid room 0
+
+			_state.rooms.clear();
+			loadRooms(*stream, count);
+			break;
+		}
+		case 4:
+			// Room commands
+			readCommands(*stream, _roomCommands);
+			break;
+		case 5:
+			// Global commands
+			readCommands(*stream, _globalCommands);
+		}
+
+		offset += 2 + size;
+		while (offset >= 512) {
+			offset -= 511;
+			++sector;
+			if (sector > 8) {
+				sector = 1;
+				++track;
+			}
+		}
+	}
+
+	applyRegionWorkarounds();
+	restoreVars();
+}
+
 } // End of namespace Adl

@@ -410,6 +410,7 @@ protected:
 	bool _canSaveNow, _canRestoreNow;
 	bool _abortScript;
 
+	byte _saveVerb, _saveNoun, _restoreVerb, _restoreNoun;
 	const AdlGameDescription *_gameDescription;
 
 private:
@@ -433,7 +434,6 @@ private:
 
 	Console *_console;
 	GUI::Debugger *getDebugger() { return _console; }
-	byte _saveVerb, _saveNoun, _restoreVerb, _restoreNoun;
 };
 
 } // End of namespace Adl

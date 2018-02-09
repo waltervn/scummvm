@@ -27,6 +27,7 @@
 #include "common/stream.h"
 
 #include "adl/adl_v2.h"
+#include "adl/adl_v4.h"
 #include "adl/display.h"
 #include "adl/graphics.h"
 #include "adl/disk.h"
@@ -182,6 +183,61 @@ HiRes3Engine::HiRes3Engine(OSystem *syst, const AdlGameDescription *gd) :
 
 	for (int i = 0; i < ARRAYSIZE(brokenRooms); ++i)
 		_brokenRooms.push_back(brokenRooms[i]);
+}
+
+class HiRes2Engine_PC : public AdlEngine_v4_PC {
+public:
+	HiRes2Engine_PC(OSystem *syst, const AdlGameDescription *gd) :
+		AdlEngine_v4_PC(syst, gd) { }
+
+	// AdlEngine
+	void init();
+	void initGameState();
+};
+
+Engine *HiRes2Engine_PC_create(OSystem *syst, const AdlGameDescription *gd) {
+	return new HiRes2Engine_PC(syst, gd);
+}
+
+void HiRes2Engine_PC::init() {
+	_graphics = new GraphicsMan_v2(*_display);
+
+	insertDisk(1);
+
+	StreamPtr stream(DataBlock_PC(_disk, 0x27, 0x1).createReadStream());
+	loadRegionMetaData(*stream);
+
+	stream.reset(_disk->createReadStream(0xa, 0x5, 0x1b0, 2));
+	loadItemDescriptions(*stream, 50);
+
+	stream.reset(_disk->createReadStream(0xa, 0x5, 0x180, 0));
+	loadDroppedItemOffsets(*stream, 16);
+
+	_itemPicIndex = DataBlock_PC(_disk, 0x27, 0x3).createReadStream();
+}
+
+void HiRes2Engine_PC::initGameState() {
+	_state.vars.resize(40);
+
+	insertDisk(1);
+
+	StreamPtr stream(DataBlock_PC(_disk, 0x27, 0x5).createReadStream());
+	loadItems(*stream);
+
+	const uint regions = _regionRoomCounts.size();
+	_state.regions.resize(regions);
+
+	for (uint r = 0; r < regions; ++r) {
+		Region &regn = _state.regions[r];
+		// Each region has 24 variables
+		regn.vars.resize(24);
+
+		regn.rooms.resize(_regionRoomCounts[r]);
+		for (uint rm = 0; rm < _regionRoomCounts[r]; ++rm)
+			initRoomState(regn.rooms[rm]);
+	}
+
+	loadRegion(1);
 }
 
 Engine *HiRes2Engine_create(OSystem *syst, const AdlGameDescription *gd) {
