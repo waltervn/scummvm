@@ -383,6 +383,7 @@ const DataBlockPtr DiskImage::getDataBlock(uint track, uint sector, uint offset,
 
 Common::SeekableReadStream *DiskImage::createReadStream(uint track, uint sector, uint offset, uint size, uint sectorLimit) const {
 	const uint bytesToRead = size * _bytesPerSector + _bytesPerSector - offset;
+
 	byte *const data = (byte *)malloc(bytesToRead);
 	uint dataOffset = 0;
 

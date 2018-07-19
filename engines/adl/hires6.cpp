@@ -261,7 +261,7 @@ void HiRes6Engine::runIntro() {
 
 	StreamPtr stream(loadSectors(_disk, 11, 1, 96));
 
-	_display->setMode(DISPLAY_MODE_HIRES);
+	_display->setMode(Display::kModeGraphics);
 	_display->loadFrameBuffer(*stream);
 	_display->updateHiResScreen();
 	delay(256 * 8609 / 1000);
@@ -285,7 +285,7 @@ void HiRes6Engine::runIntro() {
 
 	_display->updateHiResScreen();
 	_display->home();
-	_display->setMode(DISPLAY_MODE_MIXED);
+	_display->setMode(Display::kModeMixed);
 	_display->moveCursorTo(Common::Point(0, 21));
 	_display->printString(copyright);
 	delay(256 * 8609 / 1000);

@@ -300,14 +300,14 @@ void HiRes5Engine::runIntro() {
 
 	StreamPtr stream(_disk->createReadStream(0x10, 0x0, 0x00, 31));
 
-	_display->setMode(DISPLAY_MODE_HIRES);
+	_display->setMode(Display::kModeGraphics);
 	_display->loadFrameBuffer(*stream);
 	_display->updateHiResScreen();
 
 	inputKey();
 
 	_display->home();
-	_display->setMode(DISPLAY_MODE_TEXT);
+	_display->setMode(Display::kModeText);
 
 	stream.reset(_disk->createReadStream(0x03, 0xc, 0x34, 1));
 	Common::String menu(readString(*stream));

@@ -177,11 +177,10 @@ void AdlEngine::delay(uint32 ms) const {
 	}
 }
 
-Common::String AdlEngine::inputString(byte prompt) const {
+Common::String AdlEngine::inputString(const Common::String &prompt) {
 	Common::String s;
 
-	if (prompt > 0)
-		_display->printString(Common::String(prompt));
+	_display->printString(Common::String(prompt));
 
 	while (1) {
 		byte b = inputKey();
@@ -223,21 +222,16 @@ byte AdlEngine::inputKey(bool showCursor) const {
 	if (showCursor)
 		_display->showCursor(true);
 
-	while (!shouldQuit() && !_isRestoring && key == 0) {
+	while (!shouldQuit() && !_isRestoring) {
 		Common::Event event;
 		if (pollEvent(event)) {
 			if (event.type != Common::EVENT_KEYDOWN)
 				continue;
 
-			switch (event.kbd.keycode) {
-			case Common::KEYCODE_BACKSPACE:
-			case Common::KEYCODE_RETURN:
-				key = convertKey(event.kbd.keycode);
+			key = convertEvent(event);
+
+			if (key != 0)
 				break;
-			default:
-				if (event.kbd.ascii >= 0x20 && event.kbd.ascii < 0x80)
-					key = convertKey(event.kbd.ascii);
-			};
 		}
 
 		_display->updateTextScreen();
@@ -708,10 +702,13 @@ void AdlEngine::gameLoop() {
 }
 
 Common::Error AdlEngine::run() {
-	initGraphics(DISPLAY_WIDTH * 2, DISPLAY_HEIGHT * 2);
-
 	_console = new Console(this);
-	_display = new Display();
+
+	if (getPlatform(*_gameDescription) == Common::kPlatformDOS)
+		_display = Display_PC_create();
+	else
+		_display = Display_A2_create();
+	_display->init();
 
 	setupOpcodeTables();
 
@@ -729,7 +726,7 @@ Common::Error AdlEngine::run() {
 		_display->printAsciiString(_strings.lineFeeds);
 	}
 
-	_display->setMode(DISPLAY_MODE_MIXED);
+	_display->setMode(Display::kModeMixed);
 
 	while (!(_isQuitting || shouldQuit()))
 		gameLoop();
@@ -943,30 +940,37 @@ bool AdlEngine::canSaveGameStateCurrently() {
 	return false;
 }
 
-byte AdlEngine::convertKey(uint16 ascii) const {
-	ascii = toupper(ascii);
+byte AdlEngine::convertEvent(const Common::Event &event) const {
+	int key = 0;
 
-	if (ascii >= 0x80)
+	switch (event.kbd.keycode) {
+	case Common::KEYCODE_BACKSPACE:
+	case Common::KEYCODE_RETURN:
+		key = event.kbd.keycode;
+		break;
+	default:
+		if (event.kbd.ascii >= 0x20 && event.kbd.ascii < 0x80)
+			key = toupper(event.kbd.ascii);
+		else
+			return 0;
+	}
+
+	if (key >= 0x60)
 		return 0;
 
-	ascii |= 0x80;
-
-	if (ascii >= 0x80 && ascii <= 0xe0)
-		return ascii;
-
-	return 0;
+	return key | 0x80;
 }
 
 Common::String AdlEngine::getLine() {
 	while (1) {
-		Common::String line = inputString(APPLECHAR('?'));
+		Common::String line = inputString(Common::String(APPLECHAR('?')));
 
 		if (shouldQuit() || _isRestoring)
 			return "";
 
 		if ((byte)line[0] == ('\r' | 0x80)) {
 			_textMode = !_textMode;
-			_display->setMode(_textMode ? DISPLAY_MODE_TEXT : DISPLAY_MODE_MIXED);
+			_display->setMode(_textMode ? Display::kModeText : Display::kModeMixed);
 			continue;
 		}
 
@@ -976,31 +980,32 @@ Common::String AdlEngine::getLine() {
 	}
 }
 
-Common::String AdlEngine::getWord(const Common::String &line, uint &index) const {
+Common::String AdlEngine::getWord(const Common::String &line, uint &index, uint size) const {
 	Common::String str;
+	const char space = _display->asciiToNative(' ');
 
-	for (uint i = 0; i < 8; ++i)
-		str += APPLECHAR(' ');
+	for (uint i = 0; i < size; ++i)
+		str += space;
 
-	int copied = 0;
+	uint copied = 0;
 
 	// Skip initial whitespace
 	while (1) {
 		if (index == line.size())
 			return str;
-		if (line[index] != APPLECHAR(' '))
+		if (line[index] != space)
 			break;
 		++index;
 	}
 
-	// Copy up to 8 characters
+	// Copy up to 'size' characters
 	while (1) {
-		if (copied < 8)
+		if (copied < size)
 			str.setChar(line[index], copied++);
 
 		index++;
 
-		if (index == line.size() || line[index] == APPLECHAR(' '))
+		if (index == line.size() || line[index] == space)
 			return str;
 	}
 }

@@ -39,6 +39,78 @@ namespace Adl {
 
 // This implements the Apple II "Hi-Res" display mode
 
+#define TEXT_WIDTH 40
+#define TEXT_HEIGHT 24
+
+#define DISPLAY_WIDTH 280
+#define DISPLAY_HEIGHT 192
+#define DISPLAY_PITCH (DISPLAY_WIDTH / 7)
+#define DISPLAY_SIZE (DISPLAY_PITCH * DISPLAY_HEIGHT)
+
+class Display_A2 : public Display {
+public:
+	Display_A2();
+	~Display_A2();
+
+	void init();
+	void setMode(Mode mode);
+	void updateTextScreen();
+	void updateHiResScreen();
+	bool saveThumbnail(Common::WriteStream &out);
+
+	// Graphics
+	void loadFrameBuffer(Common::ReadStream &stream, byte *dst);
+	void loadFrameBuffer(Common::ReadStream &stream);
+	void putPixel(const Common::Point &p, byte color);
+	void setPixelByte(const Common::Point &p, byte color);
+	void setPixelBit(const Common::Point &p, byte color);
+	void setPixelPalette(const Common::Point &p, byte color);
+	byte getPixelByte(const Common::Point &p) const;
+	bool getPixelBit(const Common::Point &p) const;
+	void clear(byte color);
+	uint getDisplayWidth() const { return DISPLAY_WIDTH; }
+	uint getDisplayHeight() const { return DISPLAY_HEIGHT; }
+	uint getDisplayPitch() const { return DISPLAY_PITCH; }
+
+	// Text
+	void home();
+	void moveCursorTo(const Common::Point &pos);
+	void moveCursorForward();
+	void moveCursorBackward();
+	void printChar(char c);
+	void printString(const Common::String &str);
+	void printAsciiString(const Common::String &str);
+	void setCharAtCursor(byte c);
+	void showCursor(bool enable);
+	uint getTextWidth() const { return TEXT_WIDTH; }
+	uint getTextHeight() const { return TEXT_HEIGHT; }
+	char asciiToNative(char c) const { return c | 0x80; }
+
+private:
+	void writeFrameBuffer(const Common::Point &p, byte color, byte mask);
+	void updateHiResSurface();
+	void showScanlines(bool enable);
+
+	void updateTextSurface();
+	void drawChar(byte c, int x, int y);
+	void createFont();
+	void scrollUp();
+
+	Mode _mode;
+
+	byte *_frameBuf;
+	Graphics::Surface *_frameBufSurface;
+	bool _scanlines;
+	bool _monochrome;
+
+	byte *_textBuf;
+	Graphics::Surface *_textBufSurface;
+	Graphics::Surface *_font;
+	uint _cursorPos;
+	bool _showCursor;
+	uint32 _startMillis;
+};
+
 #define TEXT_BUF_SIZE (TEXT_WIDTH * TEXT_HEIGHT)
 
 #define COLOR_PALETTE_ENTRIES 8
@@ -105,10 +177,27 @@ static const byte font[64][5] = {
 	{ 0x00, 0x82, 0x44, 0x28, 0x10 }, { 0x04, 0x02, 0xb2, 0x0a, 0x04 }  // >?
 };
 
-Display::Display() :
-		_mode(DISPLAY_MODE_TEXT),
+Display_A2::Display_A2() :
+		_mode(kModeText),
 		_cursorPos(0),
 		_showCursor(false) {
+}
+
+Display_A2::~Display_A2() {
+	delete[] _frameBuf;
+	_frameBufSurface->free();
+	delete _frameBufSurface;
+
+	delete[] _textBuf;
+	_textBufSurface->free();
+	delete _textBufSurface;
+
+	_font->free();
+	delete _font;
+}
+
+void Display_A2::init() {
+	initGraphics(DISPLAY_WIDTH * 2, DISPLAY_HEIGHT * 2);
 
 	_monochrome = !ConfMan.getBool("color");
 	_scanlines = ConfMan.getBool("scanlines");
@@ -138,51 +227,38 @@ Display::Display() :
 	_startMillis = g_system->getMillis();
 }
 
-Display::~Display() {
-	delete[] _frameBuf;
-	_frameBufSurface->free();
-	delete _frameBufSurface;
-
-	delete[] _textBuf;
-	_textBufSurface->free();
-	delete _textBufSurface;
-
-	_font->free();
-	delete _font;
-}
-
-void Display::setMode(DisplayMode mode) {
+void Display_A2::setMode(Mode mode) {
 	_mode = mode;
 
-	if (_mode == DISPLAY_MODE_TEXT || _mode == DISPLAY_MODE_MIXED)
+	if (_mode == kModeText || _mode == kModeMixed)
 		updateTextScreen();
-	if (_mode == DISPLAY_MODE_HIRES || _mode == DISPLAY_MODE_MIXED)
+	if (_mode == kModeGraphics || _mode == kModeMixed)
 		updateHiResScreen();
 }
 
-void Display::updateTextScreen() {
+void Display_A2::updateTextScreen() {
 	updateTextSurface();
 
-	if (_mode == DISPLAY_MODE_TEXT)
+	if (_mode == kModeText)
 		g_system->copyRectToScreen(_textBufSurface->getPixels(), _textBufSurface->pitch, 0, 0, _textBufSurface->w, _textBufSurface->h);
-	else if (_mode == DISPLAY_MODE_MIXED)
+	else if (_mode == kModeMixed)
 		g_system->copyRectToScreen(_textBufSurface->getBasePtr(0, _textBufSurface->h - 4 * 8 * 2), _textBufSurface->pitch, 0, _textBufSurface->h - 4 * 8 * 2, _textBufSurface->w, 4 * 8 * 2);
 
 	g_system->updateScreen();
 }
 
-void Display::updateHiResScreen() {
+void Display_A2::updateHiResScreen() {
 	updateHiResSurface();
 
-	if (_mode == DISPLAY_MODE_HIRES)
+	if (_mode == kModeGraphics)
 		g_system->copyRectToScreen(_frameBufSurface->getPixels(), _frameBufSurface->pitch, 0, 0, _frameBufSurface->w, _frameBufSurface->h);
-	else if (_mode == DISPLAY_MODE_MIXED)
+	else if (_mode == kModeMixed)
 		g_system->copyRectToScreen(_frameBufSurface->getPixels(), _frameBufSurface->pitch, 0, 0, _frameBufSurface->w, _frameBufSurface->h - 4 * 8 * 2);
 
 	g_system->updateScreen();
 }
 
-bool Display::saveThumbnail(Common::WriteStream &out) {
+bool Display_A2::saveThumbnail(Common::WriteStream &out) {
 	if (_scanlines) {
 		showScanlines(false);
 		g_system->updateScreen();
@@ -198,7 +274,7 @@ bool Display::saveThumbnail(Common::WriteStream &out) {
 	return retval;
 }
 
-void Display::loadFrameBuffer(Common::ReadStream &stream, byte *dst) {
+void Display_A2::loadFrameBuffer(Common::ReadStream &stream, byte *dst) {
 	for (uint j = 0; j < 8; ++j) {
 		for (uint i = 0; i < 8; ++i) {
 			stream.read(dst, DISPLAY_PITCH);
@@ -217,11 +293,11 @@ void Display::loadFrameBuffer(Common::ReadStream &stream, byte *dst) {
 		error("Failed to read frame buffer");
 }
 
-void Display::loadFrameBuffer(Common::ReadStream &stream) {
+void Display_A2::loadFrameBuffer(Common::ReadStream &stream) {
 	loadFrameBuffer(stream, _frameBuf);
 }
 
-void Display::putPixel(const Common::Point &p, byte color) {
+void Display_A2::putPixel(const Common::Point &p, byte color) {
 	byte offset = p.x / 7;
 	byte mask = 0x80 | (1 << (p.x % 7));
 
@@ -241,34 +317,34 @@ void Display::putPixel(const Common::Point &p, byte color) {
 	writeFrameBuffer(p, color, mask);
 }
 
-void Display::setPixelByte(const Common::Point &p, byte color) {
+void Display_A2::setPixelByte(const Common::Point &p, byte color) {
 	assert(p.x >= 0 && p.x < DISPLAY_WIDTH && p.y >= 0 && p.y < DISPLAY_HEIGHT);
 
 	_frameBuf[p.y * DISPLAY_PITCH + p.x / 7] = color;
 }
 
-void Display::setPixelBit(const Common::Point &p, byte color) {
+void Display_A2::setPixelBit(const Common::Point &p, byte color) {
 	writeFrameBuffer(p, color, 1 << (p.x % 7));
 }
 
-void Display::setPixelPalette(const Common::Point &p, byte color) {
+void Display_A2::setPixelPalette(const Common::Point &p, byte color) {
 	writeFrameBuffer(p, color, 0x80);
 }
 
-byte Display::getPixelByte(const Common::Point &p) const {
+byte Display_A2::getPixelByte(const Common::Point &p) const {
 	assert(p.x >= 0 && p.x < DISPLAY_WIDTH && p.y >= 0 && p.y < DISPLAY_HEIGHT);
 
 	return _frameBuf[p.y * DISPLAY_PITCH + p.x / 7];
 }
 
-bool Display::getPixelBit(const Common::Point &p) const {
+bool Display_A2::getPixelBit(const Common::Point &p) const {
 	assert(p.x >= 0 && p.x < DISPLAY_WIDTH && p.y >= 0 && p.y < DISPLAY_HEIGHT);
 
 	byte *b = _frameBuf + p.y * DISPLAY_PITCH + p.x / 7;
 	return *b & (1 << (p.x % 7));
 }
 
-void Display::clear(byte color) {
+void Display_A2::clear(byte color) {
 	byte val = 0;
 
 	byte c = color << 1;
@@ -281,24 +357,24 @@ void Display::clear(byte color) {
 	}
 }
 
-void Display::home() {
+void Display_A2::home() {
 	memset(_textBuf, (byte)APPLECHAR(' '), TEXT_BUF_SIZE);
 	_cursorPos = 0;
 }
 
-void Display::moveCursorForward() {
+void Display_A2::moveCursorForward() {
 	++_cursorPos;
 
 	if (_cursorPos >= TEXT_BUF_SIZE)
 		scrollUp();
 }
 
-void Display::moveCursorBackward() {
+void Display_A2::moveCursorBackward() {
 	if (_cursorPos > 0)
 		--_cursorPos;
 }
 
-void Display::moveCursorTo(const Common::Point &pos) {
+void Display_A2::moveCursorTo(const Common::Point &pos) {
 	_cursorPos = pos.y * TEXT_WIDTH + pos.x;
 
 	if (_cursorPos >= TEXT_BUF_SIZE)
@@ -306,7 +382,7 @@ void Display::moveCursorTo(const Common::Point &pos) {
 }
 
 // FIXME: This does not currently update the surfaces
-void Display::printChar(char c) {
+void Display_A2::printChar(char c) {
 	if (c == APPLECHAR('\r'))
 		_cursorPos = (_cursorPos / TEXT_WIDTH + 1) * TEXT_WIDTH;
 	else if (c == APPLECHAR('\a')) {
@@ -321,7 +397,7 @@ void Display::printChar(char c) {
 		scrollUp();
 }
 
-void Display::printString(const Common::String &str) {
+void Display_A2::printString(const Common::String &str) {
 	Common::String::const_iterator c;
 	for (c = str.begin(); c != str.end(); ++c)
 		printChar(*c);
@@ -329,7 +405,7 @@ void Display::printString(const Common::String &str) {
 	updateTextScreen();
 }
 
-void Display::printAsciiString(const Common::String &str) {
+void Display_A2::printAsciiString(const Common::String &str) {
 	Common::String aStr;
 
 	Common::String::const_iterator it;
@@ -339,15 +415,15 @@ void Display::printAsciiString(const Common::String &str) {
 	printString(aStr);
 }
 
-void Display::setCharAtCursor(byte c) {
+void Display_A2::setCharAtCursor(byte c) {
 	_textBuf[_cursorPos] = c;
 }
 
-void Display::showCursor(bool enable) {
+void Display_A2::showCursor(bool enable) {
 	_showCursor = enable;
 }
 
-void Display::writeFrameBuffer(const Common::Point &p, byte color, byte mask) {
+void Display_A2::writeFrameBuffer(const Common::Point &p, byte color, byte mask) {
 	assert(p.x >= 0 && p.x < DISPLAY_WIDTH && p.y >= 0 && p.y < DISPLAY_HEIGHT);
 
 	byte *b = _frameBuf + p.y * DISPLAY_PITCH + p.x / 7;
@@ -356,7 +432,7 @@ void Display::writeFrameBuffer(const Common::Point &p, byte color, byte mask) {
 	*b ^= color;
 }
 
-void Display::showScanlines(bool enable) {
+void Display_A2::showScanlines(bool enable) {
 	byte pal[COLOR_PALETTE_ENTRIES * 3];
 
 	g_system->getPaletteManager()->grabPalette(pal, 0, COLOR_PALETTE_ENTRIES);
@@ -485,7 +561,7 @@ static void copyEvenSurfaceRows(Graphics::Surface &surf) {
 	}
 }
 
-void Display::updateHiResSurface() {
+void Display_A2::updateHiResSurface() {
 	byte *src = _frameBuf;
 	byte *dst = (byte *)_frameBufSurface->getPixels();
 
@@ -501,7 +577,7 @@ void Display::updateHiResSurface() {
 	copyEvenSurfaceRows(*_frameBufSurface);
 }
 
-void Display::updateTextSurface() {
+void Display_A2::updateTextSurface() {
 	for (uint row = 0; row < 24; ++row)
 		for (uint col = 0; col < TEXT_WIDTH; ++col) {
 			uint charPos = row * TEXT_WIDTH + col;
@@ -526,7 +602,7 @@ void Display::updateTextSurface() {
 		}
 }
 
-void Display::drawChar(byte c, int x, int y) {
+void Display_A2::drawChar(byte c, int x, int y) {
 	byte *buf = (byte *)_font->getPixels() + y * _font->pitch + x;
 
 	for (uint row = 0; row < 8; ++row) {
@@ -541,7 +617,7 @@ void Display::drawChar(byte c, int x, int y) {
 	}
 }
 
-void Display::createFont() {
+void Display_A2::createFont() {
 	_font = new Graphics::Surface;
 	_font->create(16 * 7 * 2, 4 * 8 * 2 * 2, Graphics::PixelFormat::createFormatCLUT8());
 
@@ -564,11 +640,15 @@ void Display::createFont() {
 	copyEvenSurfaceRows(*_font);
 }
 
-void Display::scrollUp() {
+void Display_A2::scrollUp() {
 	memmove(_textBuf, _textBuf + TEXT_WIDTH, TEXT_BUF_SIZE - TEXT_WIDTH);
 	memset(_textBuf + TEXT_BUF_SIZE - TEXT_WIDTH, (byte)APPLECHAR(' '), TEXT_WIDTH);
 	if (_cursorPos >= TEXT_WIDTH)
 		_cursorPos -= TEXT_WIDTH;
+}
+
+Display *Display_A2_create() {
+	return new Display_A2();
 }
 
 } // End of namespace Adl

@@ -179,7 +179,7 @@ void HiRes4Engine::runIntroAdvise(Common::SeekableReadStream &menu) {
 	backupText.push_back(readStringAt(menu, 0x6a9, '"'));
 	backupText.push_back(readStringAt(menu, 0x6c6, '"'));
 
-	_display->setMode(DISPLAY_MODE_TEXT);
+	_display->setMode(Display::kModeText);
 
 	for (uint x = 2; x <= 36; ++x)
 		putSpace(x, 2);
@@ -252,14 +252,17 @@ void HiRes4Engine::runIntroAdvise(Common::SeekableReadStream &menu) {
 }
 
 void HiRes4Engine::runIntroLogo(Common::SeekableReadStream &ms2) {
+	const uint width = _display->getDisplayWidth();
+	const uint pitch = _display->getDisplayPitch();
+	const uint height = _display->getDisplayHeight();
 	_display->clear(0x00);
-	_display->setMode(DISPLAY_MODE_HIRES);
-	byte *logo = new byte[DISPLAY_SIZE];
-	Display::loadFrameBuffer(ms2, logo);
+	_display->setMode(Display::kModeGraphics);
+	byte *logo = new byte[pitch * height];
+	_display->loadFrameBuffer(ms2, logo);
 
-	for (uint x = 0; x < DISPLAY_WIDTH; ++x) {
-		for (uint y = 0; y < DISPLAY_HEIGHT; ++y) {
-			const byte p = logo[y * DISPLAY_PITCH + x / 7];
+	for (uint x = 0; x < width; ++x) {
+		for (uint y = 0; y < height; ++y) {
+			const byte p = logo[y * pitch + x / 7];
 			_display->setPixelBit(Common::Point(x, y), p);
 			if (x % 7 == 6)
 				_display->setPixelPalette(Common::Point(x, y), p);
@@ -279,8 +282,8 @@ void HiRes4Engine::runIntroLogo(Common::SeekableReadStream &ms2) {
 	for (uint i = 38; i != 0; --i) {
 		Common::Point p;
 
-		for (p.y = 1; p.y < DISPLAY_HEIGHT; ++p.y)
-			for (p.x = 0; p.x < DISPLAY_WIDTH; p.x += 7)
+		for (p.y = 1; p.y < (int)height; ++p.y)
+			for (p.x = 0; p.x < (int)width; p.x += 7)
 				_display->setPixelByte(Common::Point(p.x, p.y - 1), _display->getPixelByte(p));
 
 		_display->updateHiResScreen();
@@ -341,7 +344,7 @@ void HiRes4Engine::runIntroInstructions(Common::SeekableReadStream &instructions
 	instructions.seek(0);
 
 	_display->home();
-	_display->setMode(DISPLAY_MODE_TEXT);
+	_display->setMode(Display::kModeText);
 
 	// Search for PRINT commands in tokenized BASIC
 	while (1) {
@@ -397,7 +400,7 @@ void HiRes4Engine::runIntroInstructions(Common::SeekableReadStream &instructions
 
 void HiRes4Engine::runIntroLoading(Common::SeekableReadStream &adventure) {
 	_display->home();
-	_display->setMode(DISPLAY_MODE_TEXT);
+	_display->setMode(Display::kModeText);
 
 	const uint kStrings = 4;
 	const uint kStringLen = 39;

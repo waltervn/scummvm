@@ -47,7 +47,7 @@ protected:
 	virtual Common::String loadMessage(uint idx) const;
 	void drawItems();
 	void drawItem(Item &item, const Common::Point &pos);
-	void loadRoom(byte roomNr);
+	virtual void loadRoom(byte roomNr);
 	virtual void showRoom();
 	void takeItem(byte noun);
 
@@ -59,6 +59,7 @@ protected:
 	virtual void adjustDataBlockPtr(byte &track, byte &sector, byte &offset, byte &size) const { }
 	void loadItems(Common::ReadStream &stream);
 	void loadRooms(Common::ReadStream &stream, byte count);
+	virtual Common::String readMessageString(Common::ReadStream &stream) const;
 	void loadMessages(Common::ReadStream &stream, byte count);
 	void loadPictures(Common::ReadStream &stream);
 	void loadItemPictures(Common::ReadStream &stream, byte count);
@@ -66,7 +67,7 @@ protected:
 	int askForSlot(const Common::String &question);
 
 	void checkTextOverflow(char c);
-	void handleTextOverflow();
+	virtual void handleTextOverflow();
 
 	int o2_isFirstTime(ScriptEnv &e);
 	int o2_isRandomGT(ScriptEnv &e);

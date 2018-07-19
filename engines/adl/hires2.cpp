@@ -27,7 +27,7 @@
 #include "common/stream.h"
 
 #include "adl/adl_v2.h"
-#include "adl/adl_v4.h"
+#include "adl/adl_pc.h"
 #include "adl/display.h"
 #include "adl/graphics.h"
 #include "adl/disk.h"
@@ -158,7 +158,7 @@ void HiRes2Engine::runIntro() {
 	_disk->setSectorLimit(0);
 	StreamPtr stream(_disk->createReadStream(0x00, 0xd, 0x17, 1));
 
-	_display->setMode(DISPLAY_MODE_TEXT);
+	_display->setMode(Display::kModeText);
 
 	Common::String str = readString(*stream);
 
@@ -185,10 +185,10 @@ HiRes3Engine::HiRes3Engine(OSystem *syst, const AdlGameDescription *gd) :
 		_brokenRooms.push_back(brokenRooms[i]);
 }
 
-class HiRes2Engine_PC : public AdlEngine_v4_PC {
+class HiRes2Engine_PC : public AdlEngine_PC {
 public:
 	HiRes2Engine_PC(OSystem *syst, const AdlGameDescription *gd) :
-		AdlEngine_v4_PC(syst, gd) { }
+		AdlEngine_PC(syst, gd) { }
 
 	// AdlEngine
 	void init();
@@ -214,6 +214,20 @@ void HiRes2Engine_PC::init() {
 	loadDroppedItemOffsets(*stream, 16);
 
 	_itemPicIndex = DataBlock_PC(_disk, 0x27, 0x3).createReadStream();
+
+	stream.reset(_disk->createReadStream(0x8, 0x2, 0x1ca, 1));
+	_strings.enterCommand = readString(*stream);
+	stream->seek(9, SEEK_CUR);
+
+	_strings_PC.keyF3 = readString(*stream, 0xff);
+	_strings_PC.keyF4 = readString(*stream, 0xff);
+	_strings_PC.keyF5 = readString(*stream, 0xff);
+	_strings_PC.keyF6 = readString(*stream, 0xff);
+
+	_strings.verbError = readString(*stream);
+
+	_cursorPos = Common::Point(2, 21);
+	_display->moveCursorTo(_cursorPos);
 }
 
 void HiRes2Engine_PC::initGameState() {

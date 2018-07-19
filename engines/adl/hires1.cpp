@@ -126,7 +126,7 @@ private:
 };
 
 void HiRes1Engine::showInstructions(Common::SeekableReadStream &stream, const uint pages[], bool goHome) {
-	_display->setMode(DISPLAY_MODE_TEXT);
+	_display->setMode(Display::kModeText);
 
 	uint page = 0;
 	while (pages[page] != 0) {
@@ -154,7 +154,7 @@ void HiRes1Engine::runIntro() {
 	// Early version have no bitmap in 'AUTO LOAD OBJ'
 	if (getGameVersion() >= GAME_VER_HR1_COARSE) {
 		stream->seek(IDI_HR1_OFS_LOGO_0);
-		_display->setMode(DISPLAY_MODE_HIRES);
+		_display->setMode(Display::kModeGraphics);
 		_display->loadFrameBuffer(*stream);
 		_display->updateHiResScreen();
 
@@ -177,7 +177,7 @@ void HiRes1Engine::runIntro() {
 		// was present in the original PD release back in 1987.
 		StreamPtr basic(_files->createReadStream("MYSTERY.HELLO"));
 
-		_display->setMode(DISPLAY_MODE_TEXT);
+		_display->setMode(Display::kModeText);
 		_display->home();
 
 		str = readStringAt(*basic, IDI_HR1_OFS_PD_TEXT_0, '"');
@@ -197,7 +197,7 @@ void HiRes1Engine::runIntro() {
 			return;
 	}
 
-	_display->setMode(DISPLAY_MODE_MIXED);
+	_display->setMode(Display::kModeMixed);
 
 	str = readStringAt(*stream, IDI_HR1_OFS_GAME_OR_HELP);
 
@@ -241,7 +241,7 @@ void HiRes1Engine::runIntro() {
 	_display->loadFrameBuffer(*stream);
 	_display->updateHiResScreen();
 
-	_display->setMode(DISPLAY_MODE_MIXED);
+	_display->setMode(Display::kModeMixed);
 
 	if (getGameVersion() == GAME_VER_HR1_SIMI) {
 		// The original waits for the key after initializing the state.

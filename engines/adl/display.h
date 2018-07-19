@@ -38,77 +38,56 @@ struct Surface;
 
 namespace Adl {
 
-#define DISPLAY_WIDTH 280
-#define DISPLAY_HEIGHT 192
-#define DISPLAY_PITCH (DISPLAY_WIDTH / 7)
-#define DISPLAY_SIZE (DISPLAY_PITCH * DISPLAY_HEIGHT)
-#define TEXT_WIDTH 40
-#define TEXT_HEIGHT 24
-
-enum DisplayMode {
-	DISPLAY_MODE_HIRES,
-	DISPLAY_MODE_TEXT,
-	DISPLAY_MODE_MIXED
-};
-
 #define APPLECHAR(C) ((char)((C) | 0x80))
 
 class Display {
 public:
-	Display();
-	~Display();
+	enum Mode {
+		kModeGraphics,
+		kModeText,
+		kModeMixed
+	};
 
-	void setMode(DisplayMode mode);
-	void updateTextScreen();
-	void updateHiResScreen();
-	bool saveThumbnail(Common::WriteStream &out);
+	virtual ~Display() { }
+
+	virtual void init() { }
+	virtual void setMode(Mode mode) { }
+	virtual void updateTextScreen() { }
+	virtual void updateHiResScreen() { }
+	virtual bool saveThumbnail(Common::WriteStream &out) { return false; }
 
 	// Graphics
-	static void loadFrameBuffer(Common::ReadStream &stream, byte *dst);
-	void loadFrameBuffer(Common::ReadStream &stream);
-	void putPixel(const Common::Point &p, byte color);
-	void setPixelByte(const Common::Point &p, byte color);
-	void setPixelBit(const Common::Point &p, byte color);
-	void setPixelPalette(const Common::Point &p, byte color);
-	byte getPixelByte(const Common::Point &p) const;
-	bool getPixelBit(const Common::Point &p) const;
-	void clear(byte color);
+	virtual void loadFrameBuffer(Common::ReadStream &stream, byte *dst) { }
+	virtual void loadFrameBuffer(Common::ReadStream &stream) { }
+	virtual void putPixel(const Common::Point &p, byte color) { }
+	virtual void setPixelByte(const Common::Point &p, byte color) { }
+	virtual void setPixelBit(const Common::Point &p, byte color) { }
+	virtual void setPixelPalette(const Common::Point &p, byte color) { }
+	virtual byte getPixelByte(const Common::Point &p) const { return 0; }
+	virtual bool getPixelBit(const Common::Point &p) const { return false; }
+	virtual void clear(byte color) { }
+	virtual uint getDisplayWidth() const { return 0; }
+	virtual uint getDisplayHeight() const { return 0; }
+	virtual uint getDisplayPitch() const { return 0; }
+	virtual uint getDisplaySize() const { return 0; }
 
 	// Text
-	void home();
-	void moveCursorTo(const Common::Point &pos);
-	void moveCursorForward();
-	void moveCursorBackward();
-	void printChar(char c);
-	void printString(const Common::String &str);
-	void printAsciiString(const Common::String &str);
-	void setCharAtCursor(byte c);
-	void showCursor(bool enable);
-
-private:
-	void writeFrameBuffer(const Common::Point &p, byte color, byte mask);
-	void updateHiResSurface();
-	void showScanlines(bool enable);
-
-	void updateTextSurface();
-	void drawChar(byte c, int x, int y);
-	void createFont();
-	void scrollUp();
-
-	DisplayMode _mode;
-
-	byte *_frameBuf;
-	Graphics::Surface *_frameBufSurface;
-	bool _scanlines;
-	bool _monochrome;
-
-	byte *_textBuf;
-	Graphics::Surface *_textBufSurface;
-	Graphics::Surface *_font;
-	uint _cursorPos;
-	bool _showCursor;
-	uint32 _startMillis;
+	virtual void home() { }
+	virtual void moveCursorTo(const Common::Point &pos) { }
+	virtual void moveCursorForward() { }
+	virtual void moveCursorBackward() { }
+	virtual void printChar(char c) { }
+	virtual void printString(const Common::String &str) { }
+	virtual void printAsciiString(const Common::String &str) { }
+	virtual void setCharAtCursor(byte c) { }
+	virtual void showCursor(bool enable) { }
+	virtual uint getTextWidth() const { return 0; }
+	virtual uint getTextHeight() const { return 0; }
+	virtual char asciiToNative(char c) const { return c; }
 };
+
+Display *Display_A2_create();
+Display *Display_PC_create();
 
 } // End of namespace Adl
 

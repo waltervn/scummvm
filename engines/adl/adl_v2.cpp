@@ -185,10 +185,14 @@ void AdlEngine_v2::handleTextOverflow() {
 	}
 }
 
+Common::String AdlEngine_v2::readMessageString(Common::ReadStream &stream) const {
+	return readString(stream, 0xff);
+}
+
 Common::String AdlEngine_v2::loadMessage(uint idx) const {
 	if (_messages[idx]) {
 		StreamPtr strStream(_messages[idx]->createReadStream());
-		return readString(*strStream, 0xff);
+		return readMessageString(*strStream);
 	}
 
 	return Common::String();
@@ -196,7 +200,8 @@ Common::String AdlEngine_v2::loadMessage(uint idx) const {
 
 void AdlEngine_v2::printString(const Common::String &str) {
 	Common::String s(str);
-	uint endPos = TEXT_WIDTH - 1;
+	const uint textWidth = _display->getTextWidth();
+	uint endPos = textWidth - 1;
 	uint startPos = 0;
 	uint pos = 0;
 
@@ -210,7 +215,7 @@ void AdlEngine_v2::printString(const Common::String &str) {
 			}
 
 			s.setChar(APPLECHAR('\r'), pos);
-			endPos = pos + TEXT_WIDTH;
+			endPos = pos + textWidth;
 			startPos = pos + 1;
 		}
 
@@ -259,7 +264,8 @@ void AdlEngine_v2::loadRoom(byte roomNr) {
 		_roomData.pictures[nr] = readDataBlockPtr(*stream);
 	}
 
-	_roomData.description = readStringAt(*stream, descOffset, 0xff);
+	stream->seek(descOffset);
+	_roomData.description = readMessageString(*stream);
 
 	_roomData.commands.clear();
 	if (commandOffset != 0) {

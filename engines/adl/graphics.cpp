@@ -30,7 +30,7 @@
 namespace Adl {
 
 void GraphicsMan::clearScreen() const {
-	_display.setMode(DISPLAY_MODE_MIXED);
+	_display.setMode(Display::kModeMixed);
 	_display.clear(getClearColor());
 }
 

@@ -83,6 +83,7 @@ protected:
 	virtual byte restoreRoomState(byte room);
 	void backupVars();
 	void restoreVars();
+	static Common::String decodeString(Common::String str, const char *xorStr);
 
 	int o4_isItemInRoom(ScriptEnv &e);
 	int o4_isVarGT(ScriptEnv &e);
@@ -100,26 +101,6 @@ protected:
 	Common::Array<RegionInitDataOffset> _regionInitDataOffsets;
 	Common::SeekableReadStream *_itemPicIndex;
 	uint _maxTrack;
-};
-
-class AdlEngine_v4_PC : public AdlEngine_v4 {
-public:
-	AdlEngine_v4_PC(OSystem *syst, const AdlGameDescription *gd) :
-		AdlEngine_v4(syst, gd) { }
-
-protected:
-	// AdlEngine_v2
-	virtual DataBlockPtr readDataBlockPtr(Common::ReadStream &f) const;
-
-	void loadRegion(byte region);
-	void loadWords(Common::ReadStream &stream);
-	void readCommands(Common::ReadStream &stream, Commands &commands);
-	void loadRegionMetaData(Common::SeekableReadStream &stream);
-	void loadItems(Common::ReadStream &stream);
-	void loadItemDescriptions(Common::SeekableReadStream &stream, byte count);
-	void fixupDiskOffset(byte &track, byte &sector) const;
-
-	Common::Array<byte> _regionRoomCounts;
 };
 
 } // End of namespace Adl
