@@ -76,14 +76,13 @@ protected:
 	void initRegions(const byte *roomsPerRegion, uint regions);
 	void fixupDiskOffset(byte &track, byte &sector) const;
 	virtual RegionChunkType getRegionChunkType(const uint16 addr) const;
-	void loadRegion(byte region);
+	virtual void loadRegion(byte region);
 	void loadItemPicIndex(Common::ReadStream &stream, uint items);
 	void backupRoomState(byte room);
 	virtual void initRoomState(RoomState &roomState) const;
 	virtual byte restoreRoomState(byte room);
 	void backupVars();
 	void restoreVars();
-	static Common::String decodeString(Common::String str, const char *xorStr);
 
 	int o4_isItemInRoom(ScriptEnv &e);
 	int o4_isVarGT(ScriptEnv &e);

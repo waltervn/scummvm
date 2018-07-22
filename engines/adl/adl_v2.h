@@ -60,7 +60,7 @@ protected:
 	void loadItems(Common::ReadStream &stream);
 	void loadRooms(Common::ReadStream &stream, byte count);
 	virtual Common::String readMessageString(Common::ReadStream &stream) const;
-	void loadMessages(Common::ReadStream &stream, byte count);
+	void loadMessages(Common::ReadStream &stream, uint count);
 	void loadPictures(Common::ReadStream &stream);
 	void loadItemPictures(Common::ReadStream &stream, byte count);
 	virtual bool isInventoryFull() { return false; }

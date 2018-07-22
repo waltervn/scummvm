@@ -40,15 +40,18 @@ protected:
 	virtual Common::String inputString(const Common::String &prompt);
 	virtual Common::String formatVerbError(const Common::String &verb) const;
 	virtual void getInput(uint &verb, uint &noun);
+	virtual ScriptEnv *createScriptEnv(const Command &cmd, byte room, byte verb, byte noun);
+	virtual void setupOpcodeTables();
 
 	// AdlEngine_v2
 	virtual DataBlockPtr readDataBlockPtr(Common::ReadStream &f) const;
 	virtual Common::String readMessageString(Common::ReadStream &stream) const;
 	virtual void handleTextOverflow();
 
-	void loadRegion(byte region);
+	void loadItemPictures(Common::ReadStream &stream, byte count);
+	virtual void loadRegion(byte region);
 	void loadWords(Common::ReadStream &stream);
-	void readCommands(Common::ReadStream &stream, Commands &commands);
+	virtual void readCommands(Common::ReadStream &stream, Commands &commands);
 	void loadRegionMetaData(Common::SeekableReadStream &stream);
 	void loadItems(Common::ReadStream &stream);
 	void loadItemDescriptions(Common::SeekableReadStream &stream, byte count);
@@ -61,6 +64,13 @@ protected:
 	uint findStringWrapLen(const Common::String &str, uint offset);
 	void printStringWrap(const Common::String &str, uint offset, uint len);
 	uint getInputWord(const Common::String &word) const;
+
+	int o_isVarLT(ScriptEnv &e);
+	int o_sound1(ScriptEnv &e);
+	int o_sound2(ScriptEnv &e);
+	int o_sound3(ScriptEnv &e);
+	int o_sound4(ScriptEnv &e);
+	int o_dummy(ScriptEnv &e);
 
 	Common::Array<byte> _regionRoomCounts;
 	Common::Point _cursorPos;

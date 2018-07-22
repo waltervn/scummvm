@@ -154,7 +154,6 @@ bool Console::Cmd_DumpScripts(int argc, const char **argv) {
 		const byte oldRegion = _engine->_state.region;
 		const byte oldPrevRegion = _engine->_state.prevRegion;
 		const byte oldRoom = _engine->_state.room;
-
 		for (byte regionNr = 1; regionNr <= _engine->_state.regions.size(); ++regionNr) {
 			_engine->switchRegion(regionNr);
 			dumpScripts(Common::String::format("%03d-", regionNr));

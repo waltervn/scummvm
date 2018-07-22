@@ -214,6 +214,7 @@ void HiRes2Engine_PC::init() {
 	loadDroppedItemOffsets(*stream, 16);
 
 	_itemPicIndex = DataBlock_PC(_disk, 0x27, 0x3).createReadStream();
+	loadItemPictures(*_itemPicIndex, _itemPicIndex->size() / 4);
 
 	stream.reset(_disk->createReadStream(0x8, 0x2, 0x1ca, 1));
 	_strings.enterCommand = readString(*stream);

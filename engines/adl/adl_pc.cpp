@@ -28,6 +28,51 @@
 
 namespace Adl {
 
+class ScriptEnv_PC : public ScriptEnv {
+public:
+	ScriptEnv_PC(const Command &cmd, byte room, byte verb, byte noun) :
+			ScriptEnv(cmd, room, verb, noun),
+			_curOpType(kOpTypeCond) { checkTerm(); }
+
+private:
+	void checkTerm() {
+		switch(_curOpType) {
+		case kOpTypeCond:
+			if (op() != 0xff)
+				break;
+
+			_curOpType = kOpTypeAct;
+			++_ip;
+			// Fallthrough
+		case kOpTypeAct:
+			if (op() != 0xff)
+				break;
+
+			_curOpType = kOpTypeDone;
+			++_ip;
+			break;
+		case kOpTypeDone:
+			// Do nothing
+			break;
+		}
+	}
+
+	kOpType getOpType() const {
+		return _curOpType;
+	}
+
+	void next(uint numArgs) {
+		_ip += numArgs + 1;
+		checkTerm();
+	}
+
+	kOpType _curOpType;
+};
+
+ScriptEnv *AdlEngine_PC::createScriptEnv(const Command &cmd, byte room, byte verb, byte noun) {
+	return new ScriptEnv_PC(cmd, room, verb, noun);
+}
+
 enum Key {
 	kKeyBackspace = 0x08,
 	kKeyReturn = 0x0d,
@@ -315,7 +360,23 @@ Common::String AdlEngine_PC::readMessageString(Common::ReadStream &stream) const
 }
 
 Common::String AdlEngine_PC::loadMessage(uint idx) const {
-	return decodeString(AdlEngine_v3::loadMessage(idx), "Avis Durgan");
+	if (_messages[idx]) {
+		const char xorString[] = { 'A', 'v', 'i', 's', ' ', 'D', 'u', 'r', 'g', 'a', 'n' };
+		StreamPtr stream(_messages[idx]->createReadStream());
+
+		Common::String str;
+		int32 size = stream->size();
+
+		for (int32 i = 0; i < size; ++i)
+			str += stream->readByte() ^ xorString[i % sizeof(xorString)];
+
+		if (stream->err() || stream->eos())
+			error("Failed to read message string");
+
+		return str;
+	}
+
+	return Common::String();
 }
 
 void AdlEngine_PC::loadItemDescriptions(Common::SeekableReadStream &stream, byte count) {
@@ -567,7 +628,7 @@ void AdlEngine_PC::loadRegion(byte region) {
 		_state.region = 0; // To avoid region offset being applied
 		_itemPics.clear();
 		_itemPicIndex->seek(0);
-		loadItemPictures(*_itemPicIndex, _itemPicIndex->size() / 5);
+		loadItemPictures(*_itemPicIndex, _itemPicIndex->size() / 4);
 	}
 
 	_state.region = region;
@@ -630,6 +691,119 @@ void AdlEngine_PC::loadRegion(byte region) {
 
 	applyRegionWorkarounds();
 	restoreVars();
+}
+
+void AdlEngine_PC::loadItemPictures(Common::ReadStream &stream, byte count) {
+	for (uint i = 0; i < count; ++i)
+		_itemPics.push_back(readDataBlockPtr(stream));
+}
+
+// I suspect this is a bug in the PC version and this should just be o4_isVarGT
+// However, this opcode isn't used at all in hires2 (hires4 usage unknown)
+int AdlEngine_PC::o_isVarLT(ScriptEnv &e) {
+	OP_DEBUG_2("\t&& VARS[%d] < %d", e.arg(1), e.arg(2));
+
+	if (getVar(e.arg(1)) < e.arg(2))
+		return 2;
+
+	return -1;
+}
+
+int AdlEngine_PC::o_sound1(ScriptEnv &e) {
+	OP_DEBUG_0("\tSOUND1()");
+	// Stub
+	return 0;
+}
+
+int AdlEngine_PC::o_sound2(ScriptEnv &e) {
+	OP_DEBUG_0("\tSOUND2()");
+	// Stub
+	return 0;
+}
+
+int AdlEngine_PC::o_sound3(ScriptEnv &e) {
+	OP_DEBUG_0("\tSOUND3()");
+	// Stub
+	return 0;
+}
+
+int AdlEngine_PC::o_sound4(ScriptEnv &e) {
+	OP_DEBUG_0("\tSOUND4()");
+	// Stub
+	return 0;
+}
+
+int AdlEngine_PC::o_dummy(ScriptEnv &e) {
+	OP_DEBUG_0("\tDUMMY()");
+	return 0;
+}
+
+typedef Common::Functor1Mem<ScriptEnv &, int, AdlEngine_PC> OpcodePC;
+#define SetOpcodeTable(x) table = &x;
+#define Opcode(x) table->push_back(new OpcodePC(this, &AdlEngine_PC::x))
+#define OpcodeUnImpl() table->push_back(new OpcodePC(this, 0))
+
+void AdlEngine_PC::setupOpcodeTables() {
+	Common::Array<const Opcode *> *table = 0;
+
+	SetOpcodeTable(_condOpcodes);
+	// 0x00
+	OpcodeUnImpl();
+	Opcode(o2_isFirstTime);
+	Opcode(o2_isRandomGT);
+	Opcode(o4_isItemInRoom);
+	// 0x04
+	Opcode(o3_isNounNotInRoom);
+	Opcode(o1_isMovesGT);
+	Opcode(o1_isVarEQ);
+	Opcode(o2_isCarryingSomething);
+	// 0x08
+	Opcode(o_isVarLT);
+	Opcode(o1_isCurPicEQ);
+
+	SetOpcodeTable(_actOpcodes);
+	// 0x00
+	OpcodeUnImpl();
+	Opcode(o1_varAdd);
+	Opcode(o1_varSub);
+	Opcode(o1_varSet);
+	// 0x04
+	Opcode(o1_listInv);
+	Opcode(o4_moveItem);
+	Opcode(o1_setRoom);
+	Opcode(o2_setCurPic);
+	// 0x08
+	Opcode(o2_setPic);
+	Opcode(o1_printMsg);
+	Opcode(o_sound1);
+	Opcode(o_sound2);
+	// 0x0c
+	Opcode(o4_moveAllItems);
+	Opcode(o1_quit);
+	Opcode(o_dummy);
+	Opcode(o4_save);
+	// 0x10
+	Opcode(o4_restore);
+	Opcode(o4_restart);
+	Opcode(o2_placeItem);
+	Opcode(o_sound3);
+	// 0x14
+	Opcode(o1_resetPic);
+	Opcode(o1_goDirection<IDI_DIR_NORTH>);
+	Opcode(o1_goDirection<IDI_DIR_SOUTH>);
+	Opcode(o1_goDirection<IDI_DIR_EAST>);
+	// 0x18
+	Opcode(o1_goDirection<IDI_DIR_WEST>);
+	Opcode(o1_goDirection<IDI_DIR_UP>);
+	Opcode(o1_goDirection<IDI_DIR_DOWN>);
+	Opcode(o1_takeItem);
+	// 0x1c
+	Opcode(o1_dropItem);
+	Opcode(o4_setRoomPic);
+	OpcodeUnImpl();
+	Opcode(o_sound4);
+	// 0x20
+	Opcode(o2_initDisk);
 }
 
 } // End of namespace Adl

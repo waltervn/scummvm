@@ -255,8 +255,10 @@ void AdlEngine_v2::loadRoom(byte roomNr) {
 	uint16 commandOffset = stream->readUint16LE();
 
 	_roomData.pictures.clear();
-	// There's no picture count. The original engine always checks at most
-	// five pictures. We use the description offset to bound our search.
+	// There's no picture count in the Apple versions. The original engine
+	// always checks five pictures until it finds a match. We use the description
+	// offset to bound our search. The PC versions use a 0xff terminator byte,
+	// but the current code will work fine there as well.
 	uint16 picCount = (descOffset - 4) / 5;
 
 	for (uint i = 0; i < picCount; ++i) {
@@ -439,7 +441,7 @@ void AdlEngine_v2::loadRooms(Common::ReadStream &stream, byte count) {
 		error("Error loading rooms");
 }
 
-void AdlEngine_v2::loadMessages(Common::ReadStream &stream, byte count) {
+void AdlEngine_v2::loadMessages(Common::ReadStream &stream, uint count) {
 	for (uint i = 0; i < count; ++i)
 		_messages.push_back(readDataBlockPtr(stream));
 }

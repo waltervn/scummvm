@@ -176,15 +176,29 @@ void AdlEngine_v4::saveState(Common::WriteStream &stream) {
 		stream.writeByte(_state.vars[i]);
 }
 
-Common::String AdlEngine_v4::decodeString(Common::String str, const char *xorStr) {
-	for (uint i = 0; i < str.size(); ++i)
-		str.setChar(str[i] ^ xorStr[i % strlen(xorStr)], i);
-
-	return str;
-}
-
 Common::String AdlEngine_v4::loadMessage(uint idx) const {
-	return decodeString(AdlEngine_v3::loadMessage(idx), "AVISDURGAN");
+	if (_messages[idx]) {
+		const char xorString[] = { 'A', 'V', 'I', 'S', 'D', 'U', 'R', 'G', 'A', 'N' };
+		StreamPtr stream(_messages[idx]->createReadStream());
+
+		Common::String str;
+
+		while (1) {
+			byte b = stream->readByte();
+
+			if (stream->eos() || stream->err())
+				error("Error reading encoded string");
+
+			if (b == 0xff)
+				break;
+
+			str += b ^ xorString[str.size() % sizeof(xorString)];
+		};
+
+		return str;
+	}
+
+	return Common::String();
 }
 
 Common::String AdlEngine_v4::getItemDescription(const Item &item) const {

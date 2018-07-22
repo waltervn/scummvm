@@ -276,7 +276,7 @@ protected:
 	virtual Common::String formatNounError(const Common::String &verb, const Common::String &noun) const;
 	Common::String getWord(const Common::String &line, uint &index, uint size = 8) const;
 	void loadWords(Common::ReadStream &stream, WordMap &map, Common::StringArray &pri) const;
-	void readCommands(Common::ReadStream &stream, Commands &commands);
+	virtual void readCommands(Common::ReadStream &stream, Commands &commands);
 	void removeCommand(Commands &commands, uint idx);
 	Command &getCommand(Commands &commands, uint idx);
 	void checkInput(byte verb, byte noun);
