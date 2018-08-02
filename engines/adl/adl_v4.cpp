@@ -513,7 +513,7 @@ int AdlEngine_v4::o4_save(ScriptEnv &e) {
 	if (shouldQuit())
 		return -1;
 
-	if (key != APPLECHAR('Y'))
+	if (key != _display->asciiToNative('Y'))
 		return 0;
 
 	const int slot = askForSlot(_strings_v2.saveInsert);
@@ -554,9 +554,9 @@ int AdlEngine_v4::o4_restart(ScriptEnv &e) {
 		if (shouldQuit())
 			return -1;
 
-		if (input.firstChar() == APPLECHAR('N')) {
+		if (input.firstChar() == _display->asciiToNative('N')) {
 			return o1_quit(e);
-		} else if (input.firstChar() == APPLECHAR('Y')) {
+		} else if (input.firstChar() == _display->asciiToNative('Y')) {
 			// The original game loads a special save game from volume 3
 			initState();
 			// Long jump
