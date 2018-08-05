@@ -55,6 +55,7 @@ protected:
 	virtual void adjustDataBlockPtr(byte &track, byte &sector, byte &offset, byte &size) const { }
 	void loadItems(Common::ReadStream &stream);
 	void loadRooms(Common::ReadStream &stream, byte count);
+	virtual Common::String readMessageString(Common::ReadStream &stream) const;
 	void loadMessages(Common::ReadStream &stream, byte count);
 	void loadPictures(Common::ReadStream &stream);
 	void loadItemPictures(Common::ReadStream &stream, byte count);
@@ -62,7 +63,7 @@ protected:
 	int askForSlot(const Common::String &question);
 
 	void checkTextOverflow(char c);
-	void handleTextOverflow();
+	virtual void handleTextOverflow();
 
 	int o2_isFirstTime(ScriptEnv &e);
 	int o2_isRandomGT(ScriptEnv &e);

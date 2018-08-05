@@ -91,16 +91,16 @@ AdlEngine::AdlEngine(OSystem *syst, const AdlGameDescription *gd) :
 		_isRestoring(false),
 		_isQuitting(false),
 		_abortScript(false),
+		_saveVerb(0),
+		_saveNoun(0),
+		_restoreVerb(0),
+		_restoreNoun(0),
 		_gameDescription(gd),
 		_inputScript(nullptr),
 		_scriptDelay(1000),
 		_scriptPaused(false),
 		_console(nullptr),
 		_messageIds(),
-		_saveVerb(0),
-		_saveNoun(0),
-		_restoreVerb(0),
-		_restoreNoun(0),
 		_canSaveNow(false),
 		_canRestoreNow(false) {
 
@@ -187,14 +187,13 @@ void AdlEngine::delay(uint32 ms) const {
 	}
 }
 
-Common::String AdlEngine::inputString(byte prompt) const {
+Common::String AdlEngine::inputString(const Common::String &prompt) {
 	Common::String s;
 
-	if (prompt > 0)
-		_display->printString(Common::String(prompt));
+	_display->printString(prompt);
 
 	while (1) {
-		byte b = inputKey();
+		char b = inputKey();
 
 		if (_inputScript) {
 			// If debug script is active, read input line from file
@@ -230,22 +229,16 @@ Common::String AdlEngine::inputString(byte prompt) const {
 		if (b == 0)
 			continue;
 
-		if (b == ('\r' | 0x80)) {
+		if (b == _display->asciiToNative('\r')) {
 			s += b;
 			_display->printString(Common::String(b));
 			return s;
-		}
-
-		if (b < 0xa0) {
-			switch (b) {
-			case Common::KEYCODE_BACKSPACE | 0x80:
-				if (!s.empty()) {
-					_display->moveCursorBackward();
-					_display->setCharAtCursor(_display->asciiToNative(' '));
-					s.deleteLastChar();
-				}
-				break;
-			};
+		} else if (b == _display->asciiToNative(Common::KEYCODE_BACKSPACE)) {
+			if (!s.empty()) {
+				_display->moveCursorBackward();
+				_display->setCharAtCursor(_display->asciiToNative(' '));
+				s.deleteLastChar();
+			}
 		} else {
 			if (s.size() < 255) {
 				s += b;
@@ -255,8 +248,8 @@ Common::String AdlEngine::inputString(byte prompt) const {
 	}
 }
 
-byte AdlEngine::inputKey(bool showCursor) const {
-	byte key = 0;
+char AdlEngine::inputKey(bool showCursor) const {
+	char key = 0;
 
 	// If debug script is active, we fake a return press for the text overflow handling
 	if (_inputScript && !_scriptPaused)
@@ -265,21 +258,16 @@ byte AdlEngine::inputKey(bool showCursor) const {
 	if (showCursor)
 		_display->showCursor(true);
 
-	while (!shouldQuit() && !_isRestoring && key == 0) {
+	while (!shouldQuit() && !_isRestoring) {
 		Common::Event event;
 		if (pollEvent(event)) {
 			if (event.type != Common::EVENT_KEYDOWN)
 				continue;
 
-			switch (event.kbd.keycode) {
-			case Common::KEYCODE_BACKSPACE:
-			case Common::KEYCODE_RETURN:
-				key = convertKey(event.kbd.keycode);
+			key = convertEvent(event);
+
+			if (key != 0)
 				break;
-			default:
-				if (event.kbd.ascii >= 0x20 && event.kbd.ascii < 0x80)
-					key = convertKey(event.kbd.ascii);
-			};
 		}
 
 		// If debug script was activated in the meantime, abort input
@@ -1002,23 +990,30 @@ bool AdlEngine::canSaveGameStateCurrently() {
 	return false;
 }
 
-byte AdlEngine::convertKey(uint16 ascii) const {
-	ascii = toupper(ascii);
+char AdlEngine::convertEvent(const Common::Event &event) const {
+	int key = 0;
 
-	if (ascii >= 0x80)
+	switch (event.kbd.keycode) {
+	case Common::KEYCODE_BACKSPACE:
+	case Common::KEYCODE_RETURN:
+		key = event.kbd.keycode;
+		break;
+	default:
+		if (event.kbd.ascii >= 0x20 && event.kbd.ascii < 0x80)
+			key = toupper(event.kbd.ascii);
+		else
+			return 0;
+	}
+
+	if (key >= 0x60)
 		return 0;
 
-	ascii |= 0x80;
-
-	if (ascii >= 0x80 && ascii <= 0xe0)
-		return ascii;
-
-	return 0;
+	return _display->asciiToNative(key);
 }
 
 Common::String AdlEngine::getLine() {
 	while (1) {
-		Common::String line = inputString(_display->asciiToNative('?'));
+		Common::String line = inputString(Common::String(_display->asciiToNative('?')));
 
 		if (shouldQuit() || _isRestoring)
 			return Common::String();
@@ -1035,14 +1030,14 @@ Common::String AdlEngine::getLine() {
 	}
 }
 
-Common::String AdlEngine::getWord(const Common::String &line, uint &index) const {
+Common::String AdlEngine::getWord(const Common::String &line, uint &index, uint size) const {
 	Common::String str;
 	const char spaceChar = _display->asciiToNative(' ');
 
 	for (uint i = 0; i < 8; ++i)
 		str += spaceChar;
 
-	int copied = 0;
+	uint copied = 0;
 
 	// Skip initial whitespace
 	while (1) {
@@ -1055,7 +1050,7 @@ Common::String AdlEngine::getWord(const Common::String &line, uint &index) const
 
 	// Copy up to 8 characters
 	while (1) {
-		if (copied < 8)
+		if (copied < size)
 			str.setChar(line[index], copied++);
 
 		index++;

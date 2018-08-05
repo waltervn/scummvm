@@ -2,6 +2,7 @@ MODULE := engines/adl
 
 MODULE_OBJS := \
 	adl.o \
+	adl_pc.o \
 	adl_v2.o \
 	adl_v3.o \
 	adl_v4.o \
@@ -11,6 +12,7 @@ MODULE_OBJS := \
 	disk.o \
 	display.o \
 	display_a2.o \
+	display_pc.o \
 	hires1.o \
 	hires2.o \
 	hires4.o \

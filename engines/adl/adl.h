@@ -269,14 +269,15 @@ protected:
 	void delay(uint32 ms) const;
 
 	virtual Common::String getLine();
-	Common::String inputString(byte prompt = 0) const;
-	byte inputKey(bool showCursor = true) const;
-	void getInput(uint &verb, uint &noun);
+	virtual Common::String inputString(const Common::String &prompt = "");
+	char inputKey(bool showCursor = true) const;
+	virtual void getInput(uint &verb, uint &noun);
 
 	virtual Common::String formatVerbError(const Common::String &verb) const;
 	virtual Common::String formatNounError(const Common::String &verb, const Common::String &noun) const;
+	Common::String getWord(const Common::String &line, uint &index, uint size = 8) const;
 	void loadWords(Common::ReadStream &stream, WordMap &map, Common::StringArray &pri) const;
-	void readCommands(Common::ReadStream &stream, Commands &commands);
+	virtual void readCommands(Common::ReadStream &stream, Commands &commands);
 	void removeCommand(Commands &commands, uint idx);
 	Command &getCommand(Commands &commands, uint idx);
 	void checkInput(byte verb, byte noun);
@@ -417,7 +418,7 @@ protected:
 	bool _canSaveNow, _canRestoreNow;
 	bool _abortScript;
 	Common::RandomSource *_random;
-
+	byte _saveVerb, _saveNoun, _restoreVerb, _restoreNoun;
 	const AdlGameDescription *_gameDescription;
 
 	mutable Common::File *_inputScript;
@@ -443,12 +444,10 @@ private:
 	bool canLoadGameStateCurrently();
 
 	// Text input
-	byte convertKey(uint16 ascii) const;
-	Common::String getWord(const Common::String &line, uint &index) const;
+	virtual char convertEvent(const Common::Event &event) const;
 
 	Console *_console;
 	GUI::Debugger *getDebugger() { return _console; }
-	byte _saveVerb, _saveNoun, _restoreVerb, _restoreNoun;
 };
 
 } // End of namespace Adl

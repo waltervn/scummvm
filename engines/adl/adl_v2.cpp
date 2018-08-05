@@ -173,10 +173,14 @@ void AdlEngine_v2::handleTextOverflow() {
 	}
 }
 
+Common::String AdlEngine_v2::readMessageString(Common::ReadStream &stream) const {
+	return readString(stream, 0xff);
+}
+
 Common::String AdlEngine_v2::loadMessage(uint idx) const {
 	if (_messages[idx]) {
 		StreamPtr strStream(_messages[idx]->createReadStream());
-		return readString(*strStream, 0xff);
+		return readMessageString(*strStream);
 	}
 
 	return Common::String();

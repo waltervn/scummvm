@@ -76,7 +76,7 @@ protected:
 	void initRegions(const byte *roomsPerRegion, uint regions);
 	void fixupDiskOffset(byte &track, byte &sector) const;
 	virtual RegionChunkType getRegionChunkType(const uint16 addr) const;
-	void loadRegion(byte region);
+	virtual void loadRegion(byte region);
 	void loadItemPicIndex(Common::ReadStream &stream, uint items);
 	void backupRoomState(byte room);
 	virtual void initRoomState(RoomState &roomState) const;

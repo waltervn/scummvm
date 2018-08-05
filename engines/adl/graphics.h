@@ -118,6 +118,22 @@ private:
 };
 
 template <class T>
+class GraphicsMan_PC : public GraphicsMan {
+public:
+	using GraphicsMan::_bounds;
+
+	GraphicsMan_PC<T>(T &display) : _display(display) { this->setBounds(Common::Rect(320, 200)); }
+
+	virtual void drawLine(const Common::Point &p1, const Common::Point &p2, byte color) const override { };
+	virtual void drawShape(Common::ReadStream &shape, Common::Point &pos, byte rotation = 0, byte scaling = 1, byte color = 0x7f) const override { };
+	virtual void drawPic(Common::SeekableReadStream &pic, const Common::Point &pos) override { };
+	virtual void clearScreen() const override { };
+
+protected:
+	T &_display;
+};
+
+template <class T>
 void GraphicsMan_v1<T>::clearScreen() const {
 	_display.setMode(Display::kModeMixed);
 	_display.clear(getClearColor());
