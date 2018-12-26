@@ -24,6 +24,8 @@
 #define AUDIO_SOFTSYNTH_CMS_H
 
 #include "common/scummsys.h"
+#include "audio/mididrv.h"
+#include "audio/musicplugin.h"
 
 /* this structure defines a channel */
 struct saa1099_channel {
@@ -67,18 +69,39 @@ struct SAA1099 {
 
 class CMSEmulator {
 public:
-	CMSEmulator(uint32 sampleRate) {
+	CMSEmulator(uint32 sampleRate) : _midi(nullptr) {
 		// In PCs the chips run at 7.15909 MHz instead of 8 MHz.
 		// Adjust sampling rate upwards to bring pitch down.
 		_sampleRate = (sampleRate * 352) / 315;
 		memset(_saa1099, 0, sizeof(SAA1099)*2);
+
+		const PluginList p = MusicMan.getPlugins();
+		for (PluginList::const_iterator m = p.begin(); m != p.end(); ++m) {
+			MusicDevices i = (*m)->get<MusicPluginObject>().getDevices();
+			for (MusicDevices::iterator d = i.begin(); d != i.end(); ++d) {
+				if (d->getName().equals("CMS-USB")) {
+					MidiDriver::DeviceHandle hdl = d->getHandle();
+					if (MidiDriver::checkDevice(hdl)) {
+						_midi = MidiDriver::createMidi(hdl);
+						break;
+					}
+				}
+			}
+		}
+
+		if (!_midi || _midi->open()) {
+			delete _midi;
+			_midi = nullptr;
+			warning("Could not find CMS-USB");
+		}
 	}
 
-	~CMSEmulator() { }
+	~CMSEmulator() { delete _midi; }
 
 	void portWrite(int port, int val);
 	void readBuffer(int16 *buffer, const int numSamples);
 private:
+	MidiDriver *_midi;
 	uint32 _sampleRate;
 
 	SAA1099 _saa1099[2];

@@ -74,7 +74,7 @@ void SciMusic::init() {
 		deviceFlags = MDT_MIDI;
 	} else {
 #endif
-		deviceFlags = MDT_PCSPK | MDT_PCJR | MDT_ADLIB | MDT_MIDI;
+		deviceFlags = MDT_PCSPK | MDT_PCJR | MDT_ADLIB | MDT_CMS | MDT_MIDI;
 #ifdef ENABLE_SCI32
 	}
 #endif
