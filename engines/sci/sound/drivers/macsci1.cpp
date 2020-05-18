@@ -1340,6 +1340,7 @@ int MidiDriver_MacSci1::open() {
 }
 
 void MidiDriver_MacSci1::close() {
+	_mixer->stopHandle(_mixerSoundHandle);
 	g_sci->getResMan()->unlockResource(_patch);
 }
 

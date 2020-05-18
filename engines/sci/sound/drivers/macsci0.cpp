@@ -1281,6 +1281,8 @@ int MidiDriver_MacSci0::open() {
 }
 
 void MidiDriver_MacSci0::close() {
+	_mixer->stopHandle(_mixerSoundHandle);
+
 	for (uint32 i = 0; i < _instruments.size(); i++)
 		delete _instruments[i];
 }
