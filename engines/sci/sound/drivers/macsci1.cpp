@@ -1481,7 +1481,7 @@ int8 MidiDriver_MacSci1::findVoice(int8 channel) {
 			if (_voiceReleaseTicks[voice] != 0)
 				ticks = _voiceReleaseTicks[voice] + 0x8000;
 			else
-				ticks = _voiceReleaseTicks[voice];
+				ticks = _voiceTicks[voice];
 
 			if (ticks >= maxTicks) {
 				maxTicks = ticks;
