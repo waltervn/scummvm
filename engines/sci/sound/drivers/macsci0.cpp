@@ -155,6 +155,7 @@ private:
 	int loadInstruments(Common::SeekableReadStream &patch);
 
 	bool _playSwitch;
+	byte _masterVolume;
 
 	struct Voice {
 		Voice();
@@ -185,7 +186,7 @@ private:
 #define MODE_PITCH_CHANGES (1 << 1)
 
 MidiDriver_MacSci0::MidiDriver_MacSci0(Audio::Mixer *mixer) : MidiDriver_Emulated(mixer),
-	_playSwitch(true), _patch(0), _timerCounter(0), _timerThreshold(16667) {
+	_playSwitch(true), _masterVolume(15), _patch(0), _timerCounter(0), _timerThreshold(16667) {
 
 	_timerIncrease = getBaseTempo();
 	memset(_chanVoice, -1, sizeof(_chanVoice));
@@ -448,8 +449,8 @@ void MidiDriver_MacSci0::doEnvelope() {
 }
 
 void MidiDriver_MacSci0::setMixVelocity(int8 voice, byte velocity) {
-	// Not in original driver
-	if (!_playSwitch)
+	// No playswitch in original driver
+	if (!_playSwitch || _masterVolume == 0)
 		velocity = 0;
 
 	_voice[voice].mixVelocity = (_voice[voice].velocity * velocity) >> 6;
@@ -556,18 +557,16 @@ void MidiDriver_MacSci0::send(uint32 b) {
 			voiceOff(voice);
 		break;
 	case 0xc0:
-		if (op1 >= _instruments.size() || !_instruments[op1]) {
-			warning("Unknown instrument %d requested for voice %d", op1, voice);
+		if (op1 >= _instruments.size() || !_instruments[op1])
 			_voice[voice].instrument = 0;
-		} else {
+		else
 			_voice[voice].instrument = _instruments[op1];
-		}
 		break;
 	}
 }
 
 void MidiDriver_MacSci0::setVolume(byte volume) {
-	_mixer->setChannelVolume(_mixerSoundHandle, volume * Audio::Mixer::kMaxChannelVolume / 15);
+	_masterVolume = CLIP<byte>(volume, 0, 15);
 }
 
 static int8 applyVelocity(byte velocity, byte unsignedSample) {
@@ -603,7 +602,7 @@ void MidiDriver_MacSci0::generateSampleChunk(int16 *data, int len) {
 			mix += applyVelocity(_voice[v].mixVelocity, sample);
 		}
 
-		data[i] = CLIP<int16>(mix, -128, 127) << 8;
+		data[i] = CLIP<int16>(mix, -128, 127) * 256 * ((_masterVolume >> 1) + 1) / 8;
 	}
 
 	for (uint i = 0; i < kVoices; ++i)
