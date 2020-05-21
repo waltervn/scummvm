@@ -1916,7 +1916,7 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 				endOffset = READ_BE_UINT16(_voiceWave[i] + WAVE_PHASE1_END);
 
 			if ((uint16)fracToInt(offset[i]) > endOffset) {
-				if (READ_BE_UINT16(_voiceWave[i] + WAVE_PHASE2_END) != 0 && _voiceNoteRange[i][NOTE_RANGE_LOOP] == 0) {
+				if (READ_BE_UINT16(_voiceWave[i] + WAVE_PHASE2_END) != 0 && READ_BE_UINT16(_voiceNoteRange[i] + NOTE_RANGE_LOOP) == 0) {
 					uint16 loopSize = endOffset - READ_BE_UINT16(_voiceWave[i] + WAVE_PHASE2_START) + 1;
 					do {
 						offset[i] -= intToFrac(loopSize);
