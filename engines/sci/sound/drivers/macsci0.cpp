@@ -109,7 +109,7 @@ public:
 	void onTimer();
 
 	void setVolume(byte volume);
-	void playSwitch(bool play) { }
+	void playSwitch(bool play) { _playSwitch = play; }
 
 private:
 	struct Instrument {
@@ -449,8 +449,9 @@ void MidiDriver_MacSci0::doEnvelope() {
 }
 
 void MidiDriver_MacSci0::setMixVelocity(int8 voice, byte velocity) {
-	// No playswitch in original driver
-	if (!_playSwitch || _masterVolume == 0)
+	// Additional SCI1 playswitch check for current interpreter
+	// mute behaviour that uses the playswitch
+	if (_masterVolume == 0 || !_playSwitch)
 		velocity = 0;
 
 	_voice[voice].mixVelocity = (_voice[voice].velocity * velocity) >> 6;
@@ -592,6 +593,12 @@ void MidiDriver_MacSci0::generateSampleChunk(int16 *data, int len) {
 
 	assert(len <= 148);
 
+	// Additional SCI1 playswitch check for current interpreter
+	// mute behaviour that uses the playswitch
+	byte volume = _masterVolume;
+	if (!_playSwitch)
+		volume = 0;
+
 	for (int i = 0; i < len; i++) {
 		int16 mix = 0;
 		for (int v = 0; v < kVoices; v++)
@@ -602,7 +609,7 @@ void MidiDriver_MacSci0::generateSampleChunk(int16 *data, int len) {
 			mix += applyVelocity(_voice[v].mixVelocity, sample);
 		}
 
-		data[i] = CLIP<int16>(mix, -128, 127) * 256 * ((_masterVolume >> 1) + 1) / 8;
+		data[i] = CLIP<int16>(mix, -128, 127) * 256 * ((volume >> 1) + 1) / 8;
 	}
 
 	for (uint i = 0; i < kVoices; ++i)
