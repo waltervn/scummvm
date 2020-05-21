@@ -1166,7 +1166,7 @@ static const byte velocityMap[64] = {
 class MidiDriver_MacSci1 : public MidiDriver_Emulated {
 public:
 	enum {
-		kVoices = 10
+		kVoices = 4
 	};
 
 	enum kEnvState {
@@ -1464,8 +1464,6 @@ void MidiDriver_MacSci1::onTimer() {
 	}
 }
 
-#if 0
-// Voice mapping version (not supported by the interpreter at this time)
 int8 MidiDriver_MacSci1::findVoice(int8 channel) {
 	int8 voice = _chanLastVoice[channel];
 	uint16 maxTicks = 0;
@@ -1495,37 +1493,6 @@ int8 MidiDriver_MacSci1::findVoice(int8 channel) {
 	if (maxTicksVoice != -1) {
 		voiceOff(maxTicksVoice);
 		_chanLastVoice[channel] = maxTicksVoice;
-		return maxTicksVoice;
-	}
-
-	return -1;
-}
-#endif
-
-int8 MidiDriver_MacSci1::findVoice(int8 channel) {
-	uint16 maxTicks = 0;
-	int8 maxTicksVoice = -1;
-
-	for (int8 voice = 0; voice < kVoices; ++voice) {
-		if (_voiceNote[voice] == -1) {
-			_voiceChannel[voice] = channel;
-			return voice;
-		}
-		uint16 ticks;
-		if (_voiceReleaseTicks[voice] != 0)
-			ticks = _voiceReleaseTicks[voice] + 0x8000;
-		else
-			ticks = _voiceReleaseTicks[voice];
-
-		if (ticks >= maxTicks) {
-			maxTicks = ticks;
-			maxTicksVoice = voice;
-		}
-	}
-
-	if (maxTicksVoice != -1) {
-		voiceOff(maxTicksVoice);
-		_voiceChannel[maxTicksVoice] = channel;
 		return maxTicksVoice;
 	}
 
@@ -1895,15 +1862,10 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 			offset[v] += _voiceStep[v];
 		}
 
-		// This is the original 4-voice mixer
-		// mix = mix4[mix];
+		mix = mix4[mix];
 
 		// Convert to 16-bit signed
-		// data[i] = (mix << 8) - 0x8000;
-
-		mix -= kVoices * 0x80;
-		mix *= 256 / kVoices;
-		data[i] = mix * 2;
+		data[i] = (mix << 8) - 0x8000;
 	}
 
 	// Loop
