@@ -55,7 +55,7 @@ class MidiDriver_MacSci1 : public MidiDriver_Emulated {
 public:
 	enum {
 		kVoices = 4,
-		kStepTableSize = 57
+		kStepTableSize = 56
 	};
 
 	enum kEnvState {
@@ -311,6 +311,9 @@ const MidiDriver_MacSci1::Wave *MidiDriver_MacSci1::loadWave(Common::SeekableRea
 
 		for (uint i = 0; i < kStepTableSize; ++i)
 			stepTable[i] = stream.readUint32BE();
+
+		// Two more words follow each step table. The first word appears to be
+		// the sample rate. The 2nd one is possibly just for alignment.
 
 		_stepTables[stepTableOffset] = stepTable;
 	}
@@ -729,34 +732,34 @@ frac_t MidiDriver_MacSci1::calcStep(int8 note, byte voice, const NoteRange *note
 	pitch /= 170;
 	noteAdj += (pitch >> 2) - 12;
 	byte offset = pitch & 3;
-	int octave = 0;
+	uint octaveRsh = 0;
 
 	if (noteAdj < 255)
-		octave = (254 - noteAdj) / 12;
+		octaveRsh = 21 - (noteAdj + 9) / 12;
 
-	while (noteAdj < 243)
-		noteAdj += 12;
-	noteAdj -= 243;
+	noteAdj = (noteAdj + 9) % 12;
 
-	frac_t step = stepTable[(noteAdj << 2) + offset + 4];
+	uint stepTableIndex = (noteAdj << 2) + offset;
+	assert(stepTableIndex + 8 < kStepTableSize);
+	frac_t step = stepTable[stepTableIndex + 4];
 
 	int16 transpose = noteRange->transpose;
 	if (transpose > 0) {
-		frac_t delta = stepTable[(noteAdj << 2) + offset + 8] - step;
+		frac_t delta = stepTable[stepTableIndex + 8] - step;
 		delta >>= 4;
-		delta >>= octave;
+		delta >>= octaveRsh;
 		delta *= transpose;
-		step >>= octave;
+		step >>= octaveRsh;
 		step += delta;
 	} else if (transpose < 0) {
-		frac_t delta = step - stepTable[(noteAdj << 2) + offset];
+		frac_t delta = step - stepTable[stepTableIndex];
 		delta >>= 4;
-		delta >>= octave;
+		delta >>= octaveRsh;
 		delta *= -transpose;
-		step >>= octave;
+		step >>= octaveRsh;
 		step -= delta;
-	} else if (octave != 0) {
-		step >>= octave;
+	} else {
+		step >>= octaveRsh;
 	}
 
 	// This ensures that we won't step outside of the sample data
