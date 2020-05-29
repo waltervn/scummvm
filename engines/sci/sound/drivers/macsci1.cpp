@@ -26,13 +26,23 @@
 
 #include "common/debug-channels.h"
 #include "common/file.h"
-#include "common/frac.h"
 #include "common/memstream.h"
 #include "common/system.h"
 #include "common/textconsole.h"
 #include "common/util.h"
 
 namespace Sci {
+
+// Unsigned version of frac_t
+
+enum {
+	UFRAC_BITS = 16
+};
+
+typedef uint32 ufrac_t;
+
+static inline ufrac_t uintToFrac(uint16 value) { return value * (1U << UFRAC_BITS); }
+static inline uint16 fracToUint(ufrac_t value) { return value / (1U << UFRAC_BITS); }
 
 static const byte envSpeedToStep[32] = {
 	0x40, 0x32, 0x24, 0x18, 0x14, 0x0f, 0x0d, 0x0b, 0x09, 0x08, 0x07, 0x06, 0x05, 0x0a, 0x04, 0x03,
@@ -97,15 +107,16 @@ private:
 
 	struct Wave {
 		Wave() : name(), phase1Start(0), phase1End(0), phase2Start(0), phase2End(0),
-				 nativeNote(0), stepTable(nullptr) { }
+				 nativeNote(0), stepTable(nullptr), samples(nullptr), size(0) { }
 
 		char name[9];
-		uint32 phase1Start, phase1End;
-		uint32 phase2Start, phase2End;
-		uint32 nativeNote;
+		uint16 phase1Start, phase1End;
+		uint16 phase2Start, phase2End;
+		uint16 nativeNote;
 	
-		const frac_t *stepTable;
+		const ufrac_t *stepTable;
 		const byte *samples;
+		uint32 size;
 	};
 
 	struct NoteRange {
@@ -140,7 +151,7 @@ private:
 	Common::Array<const Instrument *> _instruments;
 	typedef Common::HashMap<uint32, const Wave *> WaveMap;
 	WaveMap _waves;
-	typedef Common::HashMap<uint32, const frac_t *> StepTableMap;
+	typedef Common::HashMap<uint32, const ufrac_t *> StepTableMap;
 	StepTableMap _stepTables;
 
 	bool _playSwitch;
@@ -156,7 +167,7 @@ private:
 	void assignVoices(int8 channel, byte voices);
 	void releaseVoices(int8 channel, byte voices);
 	void donateVoices();
-	frac_t calcStep(int8 note, byte voice, const NoteRange *noteRange, const Wave *wave, const frac_t *stepTable);
+	ufrac_t calcStep(int8 note, byte voice, const NoteRange *noteRange, const Wave *wave, const ufrac_t *stepTable);
 	bool calcVoiceStep(byte voice);
 	void noteOn(int8 channel, int8 note, int8 velocity);
 	void noteOff(int8 channel, int8 note);
@@ -175,13 +186,13 @@ private:
 	byte _voiceEnvCntDown[kVoices];
 	uint16 _voiceTicks[kVoices];
 	uint16 _voiceReleaseTicks[kVoices];
-	frac_t _voiceStep[kVoices];
+	ufrac_t _voiceStep[kVoices];
 
 	struct Voice {
 		const NoteRange *noteRange;
 		const Wave *wave;
-		const frac_t *stepTable;
-		frac_t pos;
+		const ufrac_t *stepTable;
+		ufrac_t pos;
 		byte velocity;
 		int8 note;
 		byte mixVelocity;
@@ -298,14 +309,13 @@ const MidiDriver_MacSci1::Wave *MidiDriver_MacSci1::loadWave(Common::SeekableRea
 
 	// 1480 additional samples are present, rounded up to the next word boundary
 	// This allows for a maximum step of 8 during sample generation without bounds checking
-
-	const uint32 sampleSize = ((wave->phase1End + 1) + 1480 + 1) & ~1;
-	byte *samples = new byte[sampleSize];
-	stream.read(samples, sampleSize);
+	wave->size = ((wave->phase1End + 1) + 1480 + 1) & ~1;
+	byte *samples = new byte[wave->size];
+	stream.read(samples, wave->size);
 	wave->samples = samples;
 
 	if (!_stepTables.contains(stepTableOffset)) {
-		frac_t *stepTable = new frac_t[kStepTableSize];
+		ufrac_t *stepTable = new ufrac_t[kStepTableSize];
 
 		stream.seek(stepTableOffset);
 
@@ -692,12 +702,12 @@ void MidiDriver_MacSci1::voiceOn(byte voice, int8 note, int8 velocity) {
 		return;
 
 	const Wave *wave = noteRange->wave;
-	const frac_t *stepTable = wave->stepTable;
+	const ufrac_t *stepTable = wave->stepTable;
 
 	_voice[voice].noteRange = noteRange;
 	_voice[voice].wave = wave;
 	_voice[voice].stepTable = stepTable;
-	_voice[voice].pos = intToFrac(wave->phase1Start);
+	_voice[voice].pos = uintToFrac(wave->phase1Start);
 
 	if (velocity != 0)
 		velocity = velocityMap[velocity >> 1];
@@ -725,7 +735,7 @@ void MidiDriver_MacSci1::voiceOff(byte voice) {
 	_voiceReleaseTicks[voice] = 0;
 }
 
-frac_t MidiDriver_MacSci1::calcStep(int8 note, byte voice, const NoteRange *noteRange, const Wave *wave, const frac_t *stepTable) {
+ufrac_t MidiDriver_MacSci1::calcStep(int8 note, byte voice, const NoteRange *noteRange, const Wave *wave, const ufrac_t *stepTable) {
 	uint16 noteAdj = note + 127 - wave->nativeNote;
 	byte channel = _voiceChannel[voice];
 	uint16 pitch = _chanPitch[channel];
@@ -741,18 +751,18 @@ frac_t MidiDriver_MacSci1::calcStep(int8 note, byte voice, const NoteRange *note
 
 	uint stepTableIndex = (noteAdj << 2) + offset;
 	assert(stepTableIndex + 8 < kStepTableSize);
-	frac_t step = stepTable[stepTableIndex + 4];
+	ufrac_t step = stepTable[stepTableIndex + 4];
 
 	int16 transpose = noteRange->transpose;
 	if (transpose > 0) {
-		frac_t delta = stepTable[stepTableIndex + 8] - step;
+		ufrac_t delta = stepTable[stepTableIndex + 8] - step;
 		delta >>= 4;
 		delta >>= octaveRsh;
 		delta *= transpose;
 		step >>= octaveRsh;
 		step += delta;
 	} else if (transpose < 0) {
-		frac_t delta = step - stepTable[stepTableIndex];
+		ufrac_t delta = step - stepTable[stepTableIndex];
 		delta >>= 4;
 		delta >>= octaveRsh;
 		delta *= -transpose;
@@ -763,7 +773,7 @@ frac_t MidiDriver_MacSci1::calcStep(int8 note, byte voice, const NoteRange *note
 	}
 
 	// This ensures that we won't step outside of the sample data
-	if ((uint32)step > (uint32)intToFrac(8))
+	if (step > uintToFrac(8))
 		return -1;
 
 	return step;
@@ -773,13 +783,13 @@ bool MidiDriver_MacSci1::calcVoiceStep(byte voice) {
 	int8 note = _voice[voice].note;
 	const NoteRange *noteRange = _voice[voice].noteRange;
 	const Wave *wave = _voice[voice].wave;
-	const frac_t *stepTable = _voice[voice].stepTable;
+	const ufrac_t *stepTable = _voice[voice].stepTable;
 
 	int16 fixedNote = noteRange->fixedNote;
 	if (fixedNote != -1)
 		note = fixedNote;
 
-	frac_t step = calcStep(note, voice, noteRange, wave, stepTable);
+	ufrac_t step = calcStep(note, voice, noteRange, wave, stepTable);
 	if (step == -1)
 		return false;
 
@@ -908,7 +918,7 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 	const byte *samples[kVoices] = { };
 	const byte silence = 0x80;
 
-	frac_t offset[kVoices];
+	ufrac_t offset[kVoices];
 
 	assert(len > 0 && len <= 186);
 
@@ -916,6 +926,12 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 		if (_voice[i].on) {
 			samples[i] = _voice[i].wave->samples;
 			offset[i] = _voice[i].pos;
+
+			// Sanity checks
+			assert(_voiceStep[i] <= uintToFrac(8));
+			const uint16 firstIndex = fracToUint(_voice[i].pos);
+			const uint16 lastIndex = fracToUint(_voice[i].pos + (len - 1) * _voiceStep[i]);
+			assert(lastIndex >= firstIndex && lastIndex < _voice[i].wave->size);
 		} else {
 			samples[i] = &silence;
 			offset[i] = 0;
@@ -928,7 +944,7 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 	for (int i = 0; i < len; i++) {
 		uint16 mix = 0;
 		for (int v = 0; v < kVoices; v++) {
-			uint16 curOffset = fracToInt(offset[v]);
+			uint16 curOffset = fracToUint(offset[v]);
 			byte sample = samples[v][curOffset];
 			mix += applyVelocity(_voice[v].mixVelocity, sample);
 			offset[v] += _voiceStep[v];
@@ -949,12 +965,12 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 			if (endOffset == 0)
 				endOffset = _voice[i].wave->phase1End;
 
-			if ((uint16)fracToInt(offset[i]) > endOffset) {
+			if (fracToUint(offset[i]) > endOffset) {
 				if (_voice[i].wave->phase2End != 0 && _voice[i].noteRange->loop) {
 					uint16 loopSize = endOffset - _voice[i].wave->phase2Start + 1;
 					do {
-						offset[i] -= intToFrac(loopSize);
-					} while ((uint16)fracToInt(offset[i]) > endOffset);
+						offset[i] -= uintToFrac(loopSize);
+					} while (fracToUint(offset[i]) > endOffset);
 				} else {
 					voiceOff(i);
 				}
