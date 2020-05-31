@@ -154,45 +154,74 @@ private:
 	const Wave *loadWave(Common::SeekableReadStream &stream);
 	bool loadInstruments(Common::SeekableReadStream &patch);
 	void freeInstruments();
-	void voiceOn(byte voice, int8 note, int8 velocity);
-	void voiceOff(byte voice);
 	int8 findVoice(int8 channel);
 	void voiceMapping(int8 channel, byte voices);
 	void assignVoices(int8 channel, byte voices);
 	void releaseVoices(int8 channel, byte voices);
 	void donateVoices();
-	ufrac_t calcStep(int8 note, byte voice, const NoteRange *noteRange, const Wave *wave, const ufrac_t *stepTable);
-	bool calcVoiceStep(byte voice);
 	void noteOn(int8 channel, int8 note, int8 velocity);
 	void noteOff(int8 channel, int8 note);
 	void changePatch(int8 channel, int8 patch);
 	void holdPedal(int8 channel, int8 pedal);
 	void setPitchWheel(int8 channel, uint16 pitch);
-	void calcMixVelocity(int8 voice);
-	void processEnvelope(int8 voice);
 	void generateSampleChunk(int16 *buf, int len);
 
-	struct Voice {
-		int8 channel;
-		int8 note;
-		byte velocity;
-		bool released;
-		bool sustained;
-		uint16 ticks;
-		uint16 releaseTicks;
+	struct Channel;
+	class Voice {
+	public:
+		Voice(MidiDriver_MacSci1 &driver) :
+			_channel(-1),
+			_note(-1),
+			_velocity(0),
+			_isReleased(false),
+			_isSustained(false),
+			_ticks(0),
+			_releaseTicks(0),
+			_envState(kEnvStateAttack),
+			_envCurVel(0),
+			_envCntDown(0),
+			_noteRange(nullptr),
+			_wave(nullptr),
+			_stepTable(nullptr),
+			_pos(0),
+			_step(0),
+			_mixVelocity(0),
+			_isOn(false),
+			_driver(driver) { }
 
-		kEnvState envState;
-		int8 envCurVel;
-		byte envCntDown;
+		void noteOn(int8 note, int8 velocity);
+		void noteOff();
 
-		const NoteRange *noteRange;
-		const Wave *wave;
-		const ufrac_t *stepTable;
-		ufrac_t pos;
-		ufrac_t step;
-		byte mixVelocity;
-		bool on;
-	} _voice[kVoices];
+		ufrac_t calcStep(int8 note, const NoteRange *noteRange, const Wave *wave, const ufrac_t *stepTable);
+		bool calcVoiceStep();
+		void calcMixVelocity();
+		void processEnvelope();
+
+		int8 _channel;
+		int8 _note;
+		byte _velocity;
+		bool _isReleased;
+		bool _isSustained;
+		uint16 _ticks;
+		uint16 _releaseTicks;
+
+		kEnvState _envState;
+		int8 _envCurVel;
+		byte _envCntDown;
+
+		const NoteRange *_noteRange;
+		const Wave *_wave;
+		const ufrac_t *_stepTable;
+		ufrac_t _pos;
+		ufrac_t _step;
+		byte _mixVelocity;
+		bool _isOn;
+
+	private:
+		MidiDriver_MacSci1 &_driver;
+	};
+
+	Voice *_voice[kVoices];
 
 	struct Channel {
 		int8 patch;
@@ -217,25 +246,8 @@ int MidiDriver_MacSci1::open() {
 	if (_isOpen)
 		return MERR_ALREADY_OPEN;
 
-	for (uint v = 0; v < kVoices; ++v) {
-		_voice[v].channel = -1;
-		_voice[v].released = false;
-		_voice[v].sustained = false;
-		_voice[v].envCurVel = 0;
-		_voice[v].envState = kEnvStateAttack;
-		_voice[v].envCntDown = 0;
-		_voice[v].pos = 0;
-		_voice[v].ticks = 0;
-		_voice[v].releaseTicks = 0;
-		_voice[v].noteRange = nullptr;
-		_voice[v].wave = nullptr;
-		_voice[v].stepTable = nullptr;
-		_voice[v].velocity = 0;
-		_voice[v].note = -1;
-		_voice[v].on = false;
-		_voice[v].mixVelocity = 0;
-		_voice[v].step = 0;
-	}
+	for (uint v = 0; v < ARRAYSIZE(_voice); ++v)
+		_voice[v] = new Voice(*this);
 
 	for (uint ch = 0; ch < MIDI_CHANNELS; ++ch) {
 		_channel[ch].patch = 0;
@@ -270,6 +282,9 @@ void MidiDriver_MacSci1::close() {
 		return;
 
 	_mixer->stopHandle(_mixerSoundHandle);
+
+	for (uint v = 0; v < ARRAYSIZE(_voice); ++v)
+		delete _voice[v];
 
 	freeInstruments();
 
@@ -426,76 +441,76 @@ void MidiDriver_MacSci1::freeInstruments() {
 	_instruments.clear();
 }
 
-void MidiDriver_MacSci1::processEnvelope(int8 voice) {
-	const NoteRange *noteRange =_voice[voice].noteRange;
+void MidiDriver_MacSci1::Voice::processEnvelope() {
+	const NoteRange *noteRange = _noteRange;
 	byte attackTarget = noteRange->attackTarget;
 	byte decayTarget = noteRange->decayTarget;
 
 	if (!noteRange->loop) {
-		_voice[voice].envCurVel = attackTarget;
+		_envCurVel = attackTarget;
 		return;
 	}
 
-	if (_voice[voice].released)
-		_voice[voice].envState = kEnvStateRelease;
+	if (_isReleased)
+		_envState = kEnvStateRelease;
 
-	switch(_voice[voice].envState) {
+	switch(_envState) {
 	case kEnvStateAttack: {
-		if (_voice[voice].envCntDown != 0) {
-			--_voice[voice].envCntDown;
+		if (_envCntDown != 0) {
+			--_envCntDown;
 			return;
 		}
 		byte attackSpeed = noteRange->attackSpeed;
-		_voice[voice].envCntDown = envSpeedToSkip[attackSpeed];
-		_voice[voice].envCurVel += envSpeedToStep[attackSpeed];
-		if (_voice[voice].envCurVel >= attackTarget) {
-			_voice[voice].envCurVel = attackTarget;
-			_voice[voice].envState = kEnvStateDecay;
+		_envCntDown = envSpeedToSkip[attackSpeed];
+		_envCurVel += envSpeedToStep[attackSpeed];
+		if (_envCurVel >= attackTarget) {
+			_envCurVel = attackTarget;
+			_envState = kEnvStateDecay;
 		}
 		break;
 	}
 	case kEnvStateDecay: {
-		if (_voice[voice].envCntDown != 0) {
-			--_voice[voice].envCntDown;
+		if (_envCntDown != 0) {
+			--_envCntDown;
 			return;
 		}
 		byte decaySpeed = noteRange->decaySpeed;
-		_voice[voice].envCntDown = envSpeedToSkip[decaySpeed];
-		_voice[voice].envCurVel -= envSpeedToStep[decaySpeed];
-		if (_voice[voice].envCurVel <= decayTarget) {
-			_voice[voice].envCurVel = decayTarget;
-			_voice[voice].envState = kEnvStateSustain;
+		_envCntDown = envSpeedToSkip[decaySpeed];
+		_envCurVel -= envSpeedToStep[decaySpeed];
+		if (_envCurVel <= decayTarget) {
+			_envCurVel = decayTarget;
+			_envState = kEnvStateSustain;
 		}
 		break;
 	}
 	case kEnvStateSustain:
-		_voice[voice].envCurVel = decayTarget;
+		_envCurVel = decayTarget;
 		break;
 	case kEnvStateRelease: {
-		if (_voice[voice].envCntDown != 0) {
-			--_voice[voice].envCntDown;
+		if (_envCntDown != 0) {
+			--_envCntDown;
 			return;
 		}
 		byte releaseSpeed = noteRange->releaseSpeed;
-		_voice[voice].envCntDown = envSpeedToSkip[releaseSpeed];
-		_voice[voice].envCurVel -= envSpeedToStep[releaseSpeed];
-		if (_voice[voice].envCurVel <= 0)
-			voiceOff(voice);
+		_envCntDown = envSpeedToSkip[releaseSpeed];
+		_envCurVel -= envSpeedToStep[releaseSpeed];
+		if (_envCurVel <= 0)
+			noteOff();
 	}
 	}
 }
 
-void MidiDriver_MacSci1::calcMixVelocity(int8 voice) {
-	byte chanVol = _channel[_voice[voice].channel].volume;
-	byte voiceVelocity = _voice[voice].velocity;
+void MidiDriver_MacSci1::Voice::calcMixVelocity() {
+	byte chanVol = _driver._channel[_channel].volume;
+	byte voiceVelocity = _velocity;
 
 	if (chanVol != 0) {
 		if (voiceVelocity != 0) {
 			voiceVelocity = voiceVelocity * chanVol / 63;
-			if (_voice[voice].envCurVel != 0) {
-				voiceVelocity = voiceVelocity * _voice[voice].envCurVel / 63;
-				if (_masterVolume != 0) {
-					voiceVelocity = voiceVelocity * (_masterVolume << 2) / 63;
+			if (_envCurVel != 0) {
+				voiceVelocity = voiceVelocity * _envCurVel / 63;
+				if (_driver._masterVolume != 0) {
+					voiceVelocity = voiceVelocity * (_driver._masterVolume << 2) / 63;
 					if (voiceVelocity == 0)
 						++voiceVelocity;
 				} else {
@@ -509,10 +524,10 @@ void MidiDriver_MacSci1::calcMixVelocity(int8 voice) {
 		voiceVelocity = 0;
 	}
 
-	if (!_playSwitch)
+	if (!_driver._playSwitch)
 		voiceVelocity = 0;
 
-	_voice[voice].mixVelocity = voiceVelocity;
+	_mixVelocity = voiceVelocity;
 }
 
 void MidiDriver_MacSci1::onTimer() {
@@ -525,12 +540,12 @@ void MidiDriver_MacSci1::onTimer() {
 	_timerCounter -= kTimerThreshold;
 
 	for (uint v = 0; v < kVoices; ++v) {
-		if (_voice[v].note != -1) {
-			++_voice[v].ticks;
-			if (_voice[v].released)
-				++_voice[v].releaseTicks;
-			processEnvelope(v);
-			calcMixVelocity(v);
+		if (_voice[v]->_note != -1) {
+			++_voice[v]->_ticks;
+			if (_voice[v]->_isReleased)
+				++_voice[v]->_releaseTicks;
+			_voice[v]->processEnvelope();
+			_voice[v]->calcMixVelocity();
 		}
 	}
 }
@@ -543,16 +558,16 @@ int8 MidiDriver_MacSci1::findVoice(int8 channel) {
 	do {
 		voice = (voice + 1) % kVoices;
 
-		if (_voice[voice].channel == channel) {
-			if (_voice[voice].note == -1) {
+		if (_voice[voice]->_channel == channel) {
+			if (_voice[voice]->_note == -1) {
 				_channel[channel].lastVoice = voice;
 				return voice;
 			}
 			uint16 ticks;
-			if (_voice[voice].releaseTicks != 0)
-				ticks = _voice[voice].releaseTicks + 0x8000;
+			if (_voice[voice]->_releaseTicks != 0)
+				ticks = _voice[voice]->_releaseTicks + 0x8000;
 			else
-				ticks = _voice[voice].ticks;
+				ticks = _voice[voice]->_ticks;
 
 			if (ticks >= maxTicks) {
 				maxTicks = ticks;
@@ -562,7 +577,7 @@ int8 MidiDriver_MacSci1::findVoice(int8 channel) {
 	} while (voice != _channel[channel].lastVoice);
 
 	if (maxTicksVoice != -1) {
-		voiceOff(maxTicksVoice);
+		_voice[maxTicksVoice]->noteOff();
 		_channel[channel].lastVoice = maxTicksVoice;
 		return maxTicksVoice;
 	}
@@ -574,7 +589,7 @@ void MidiDriver_MacSci1::voiceMapping(int8 channel, byte voices) {
 	int curVoices = 0;
 
 	for (uint v = 0; v < kVoices; ++v)
-		if (_voice[v].channel == channel)
+		if (_voice[v]->_channel == channel)
 			curVoices++;
 
 	curVoices += _channel[channel].extraVoices;
@@ -589,11 +604,11 @@ void MidiDriver_MacSci1::voiceMapping(int8 channel, byte voices) {
 
 void MidiDriver_MacSci1::assignVoices(int8 channel, byte voices) {
 	for (uint v = 0; v < kVoices; ++v)
-		if (_voice[v].channel == -1) {
-			_voice[v].channel = channel;
+		if (_voice[v]->_channel == -1) {
+			_voice[v]->_channel = channel;
 
-			if (_voice[v].note != -1)
-				voiceOff(v);
+			if (_voice[v]->_note != -1)
+				_voice[v]->noteOff();
 
 			if (--voices == 0)
 				break;
@@ -612,8 +627,8 @@ void MidiDriver_MacSci1::releaseVoices(int8 channel, byte voices) {
 	_channel[channel].extraVoices = 0;
 
 	for (uint v = 0; v < kVoices; ++v) {
-		if ((_voice[v].channel == channel) && (_voice[v].note == -1)) {
-			_voice[v].channel = -1;
+		if ((_voice[v]->_channel == channel) && (_voice[v]->_note == -1)) {
+			_voice[v]->_channel = -1;
 			if (--voices == 0)
 				return;
 		}
@@ -624,14 +639,14 @@ void MidiDriver_MacSci1::releaseVoices(int8 channel, byte voices) {
 		int8 maxTicksVoice = 0;
 
 		for (uint v = 0; v < kVoices; ++v) {
-			if (_voice[v].channel == channel) {
+			if (_voice[v]->_channel == channel) {
 				// The original code seems to be broken here. It reads a word value from
 				// byte array _voiceSustained.
-				uint16 ticks = _voice[v].releaseTicks;
+				uint16 ticks = _voice[v]->_releaseTicks;
 				if (ticks > 0)
 					ticks += 0x8000;
 				else
-					ticks = _voice[v].ticks;
+					ticks = _voice[v]->_ticks;
 
 				if (ticks >= maxTicks) {
 					maxTicks = ticks;
@@ -639,9 +654,9 @@ void MidiDriver_MacSci1::releaseVoices(int8 channel, byte voices) {
 				}
 			}
 		}
-		_voice[maxTicksVoice].sustained = false;
-		voiceOff(maxTicksVoice);
-		_voice[maxTicksVoice].channel = -1;
+		_voice[maxTicksVoice]->_isSustained = false;
+		_voice[maxTicksVoice]->noteOff();
+		_voice[maxTicksVoice]->_channel = -1;
 	} while (--voices > 0);
 }
 
@@ -649,7 +664,7 @@ void MidiDriver_MacSci1::donateVoices() {
 	int freeVoices = 0;
 
 	for (uint v = 0; v < kVoices; ++v)
-		if (_voice[v].channel == -1)
+		if (_voice[v]->_channel == -1)
 			freeVoices++;
 
 	if (freeVoices == 0)
@@ -671,21 +686,21 @@ void MidiDriver_MacSci1::donateVoices() {
 	}
 }
 
-void MidiDriver_MacSci1::voiceOn(byte voice, int8 note, int8 velocity) {
-	_voice[voice].released = false;
-	_voice[voice].envCurVel = 0;
-	_voice[voice].envState = kEnvStateAttack;
-	_voice[voice].envCntDown = 0;
-	_voice[voice].ticks = 0;
-	_voice[voice].releaseTicks = 0;
+void MidiDriver_MacSci1::Voice::noteOn(int8 note, int8 velocity) {
+	_isReleased = false;
+	_envCurVel = 0;
+	_envState = kEnvStateAttack;
+	_envCntDown = 0;
+	_ticks = 0;
+	_releaseTicks = 0;
 
-	int8 patchId = _channel[_voice[voice].channel].patch;
+	int8 patchId = _driver._channel[_channel].patch;
 
 	// Check for valid patch
-	if (patchId < 0 || (uint)patchId >= _instruments.size() || !_instruments[patchId])
+	if (patchId < 0 || (uint)patchId >= _driver._instruments.size() || !_driver._instruments[patchId])
 		return;
 
-	const Instrument *ins = _instruments[patchId];
+	const Instrument *ins = _driver._instruments[patchId];
 
 	// Each patch links to one or more waves, where each wave is assigned to a range of notes.
 	Common::Array<NoteRange>::const_iterator noteRange;
@@ -701,41 +716,41 @@ void MidiDriver_MacSci1::voiceOn(byte voice, int8 note, int8 velocity) {
 	const Wave *wave = noteRange->wave;
 	const ufrac_t *stepTable = wave->stepTable;
 
-	_voice[voice].noteRange = noteRange;
-	_voice[voice].wave = wave;
-	_voice[voice].stepTable = stepTable;
-	_voice[voice].pos = uintToFrac(wave->phase1Start);
+	_noteRange = noteRange;
+	_wave = wave;
+	_stepTable = stepTable;
+	_pos = uintToFrac(wave->phase1Start);
 
 	if (velocity != 0)
 		velocity = velocityMap[velocity >> 1];
 
-	_voice[voice].velocity = velocity;
-	_voice[voice].note = note;
+	_velocity = velocity;
+	_note = note;
 
-	if (!calcVoiceStep(voice))
-		_voice[voice].note = -1;
+	if (!calcVoiceStep())
+		_note = -1;
 	else {
-		_voice[voice].mixVelocity = 0;
-		_voice[voice].on = true;
+		_mixVelocity = 0;
+		_isOn = true;
 	}
 }
 
-void MidiDriver_MacSci1::voiceOff(byte voice) {
-	_voice[voice].on = false;
-	_voice[voice].velocity = 0;
-	_voice[voice].note = -1;
-	_voice[voice].sustained = false;
-	_voice[voice].released = false;
-	_voice[voice].envState = kEnvStateAttack;
-	_voice[voice].envCntDown = 0;
-	_voice[voice].ticks = 0;
-	_voice[voice].releaseTicks = 0;
+void MidiDriver_MacSci1::Voice::noteOff() {
+	_isOn = false;
+	_velocity = 0;
+	_note = -1;
+	_isSustained = false;
+	_isReleased = false;
+	_envState = kEnvStateAttack;
+	_envCntDown = 0;
+	_ticks = 0;
+	_releaseTicks = 0;
 }
 
-ufrac_t MidiDriver_MacSci1::calcStep(int8 note, byte voice, const NoteRange *noteRange, const Wave *wave, const ufrac_t *stepTable) {
+ufrac_t MidiDriver_MacSci1::Voice::calcStep(int8 note, const NoteRange *noteRange, const Wave *wave, const ufrac_t *stepTable) {
 	uint16 noteAdj = note + 127 - wave->nativeNote;
-	byte channel = _voice[voice].channel;
-	uint16 pitch = _channel[channel].pitch;
+	byte channel = _channel;
+	uint16 pitch = _driver._channel[channel].pitch;
 	pitch /= 170;
 	noteAdj += (pitch >> 2) - 12;
 	byte offset = pitch & 3;
@@ -776,21 +791,21 @@ ufrac_t MidiDriver_MacSci1::calcStep(int8 note, byte voice, const NoteRange *not
 	return step;
 }
 
-bool MidiDriver_MacSci1::calcVoiceStep(byte voice) {
-	int8 note = _voice[voice].note;
-	const NoteRange *noteRange = _voice[voice].noteRange;
-	const Wave *wave = _voice[voice].wave;
-	const ufrac_t *stepTable = _voice[voice].stepTable;
+bool MidiDriver_MacSci1::Voice::calcVoiceStep() {
+	int8 note = _note;
+	const NoteRange *noteRange = _noteRange;
+	const Wave *wave = _wave;
+	const ufrac_t *stepTable = _stepTable;
 
 	int16 fixedNote = noteRange->fixedNote;
 	if (fixedNote != -1)
 		note = fixedNote;
 
-	ufrac_t step = calcStep(note, voice, noteRange, wave, stepTable);
+	ufrac_t step = calcStep(note, noteRange, wave, stepTable);
 	if (step == -1)
 		return false;
 
-	_voice[voice].step = step;
+	_step = step;
 	return true;
 }
 
@@ -801,27 +816,27 @@ void MidiDriver_MacSci1::noteOn(int8 channel, int8 note, int8 velocity) {
 	}
 
 	for (uint v = 0; v < kVoices; ++v) {
-		if (_voice[v].channel == channel && _voice[v].note == note) {
-			_voice[v].sustained = false;
-			voiceOff(v);
-			voiceOn(v, note, velocity);
+		if (_voice[v]->_channel == channel && _voice[v]->_note == note) {
+			_voice[v]->_isSustained = false;
+			_voice[v]->noteOff();
+			_voice[v]->noteOn(note, velocity);
 			return;
 		}
 	}
 
 	int8 voice = findVoice(channel);
 	if (voice != -1)
-		voiceOn(voice, note, velocity);
+		_voice[voice]->noteOn(note, velocity);
 }
 
 void MidiDriver_MacSci1::noteOff(int8 channel, int8 note) {
 	for (uint v = 0; v < kVoices; ++v) {
-		if (_voice[v].channel == channel && _voice[v].note == note) {
+		if (_voice[v]->_channel == channel && _voice[v]->_note == note) {
 			if (_channel[channel].hold)
-				_voice[v].sustained = true;
+				_voice[v]->_isSustained = true;
 			else {
-				_voice[v].released = true;
-				_voice[v].envCntDown = 0;
+				_voice[v]->_isReleased = true;
+				_voice[v]->_envCntDown = 0;
 			}
 			return;
 		}
@@ -839,9 +854,9 @@ void MidiDriver_MacSci1::holdPedal(int8 channel, int8 pedal) {
 		return;
 
 	for (uint voice = 0; voice < kVoices; ++voice) {
-		if (_voice[voice].channel == channel && _voice[voice].sustained) {
-			_voice[voice].sustained = false;
-			_voice[voice].released = true;
+		if (_voice[voice]->_channel == channel && _voice[voice]->_isSustained) {
+			_voice[voice]->_isSustained = false;
+			_voice[voice]->_isReleased = true;
 		}
 	}
 }
@@ -850,8 +865,8 @@ void MidiDriver_MacSci1::setPitchWheel(int8 channel, uint16 pitch) {
 	_channel[channel].pitch = pitch;
 
 	for (uint v = 0; v < kVoices; ++v)
-		if (_voice[v].note != -1 && _voice[v].channel == channel)
-			calcVoiceStep(v);
+		if (_voice[v]->_note != -1 && _voice[v]->_channel == channel)
+			_voice[v]->calcVoiceStep();
 }
 
 void MidiDriver_MacSci1::send(uint32 b) {
@@ -885,8 +900,8 @@ void MidiDriver_MacSci1::send(uint32 b) {
 			break;
 		case 0x7b:
 			for (uint voice = 0; voice < kVoices; ++voice) {
-				if (_voice[voice].channel == channel && _voice[voice].note != -1)
-					voiceOff(voice);
+				if (_voice[voice]->_channel == channel && _voice[voice]->_note != -1)
+					_voice[voice]->noteOff();
 			}
 		}
 		break;
@@ -920,19 +935,19 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 	assert(len > 0 && len <= 186);
 
 	for (uint v = 0; v < kVoices; ++v) {
-		if (_voice[v].on) {
-			samples[v] = _voice[v].wave->samples;
-			offset[v] = _voice[v].pos;
+		if (_voice[v]->_isOn) {
+			samples[v] = _voice[v]->_wave->samples;
+			offset[v] = _voice[v]->_pos;
 
 			// Sanity checks
-			assert(_voice[v].step <= uintToFrac(8));
-			const uint16 firstIndex = fracToUint(_voice[v].pos);
-			const uint16 lastIndex = fracToUint(_voice[v].pos + (len - 1) * _voice[v].step);
-			assert(lastIndex >= firstIndex && lastIndex < _voice[v].wave->size);
+			assert(_voice[v]->_step <= uintToFrac(8));
+			const uint16 firstIndex = fracToUint(_voice[v]->_pos);
+			const uint16 lastIndex = fracToUint(_voice[v]->_pos + (len - 1) * _voice[v]->_step);
+			assert(lastIndex >= firstIndex && lastIndex < _voice[v]->_wave->size);
 		} else {
 			samples[v] = &silence;
 			offset[v] = 0;
-			_voice[v].step = 0;
+			_voice[v]->_step = 0;
 		}
 	}
 
@@ -943,8 +958,8 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 		for (int v = 0; v < kVoices; ++v) {
 			uint16 curOffset = fracToUint(offset[v]);
 			byte sample = samples[v][curOffset];
-			mix += applyVelocity(_voice[v].mixVelocity, sample);
-			offset[v] += _voice[v].step;
+			mix += applyVelocity(_voice[v]->_mixVelocity, sample);
+			offset[v] += _voice[v]->_step;
 		}
 
 		mix = CLIP<uint16>(mix, 384, 639) - 384;
@@ -956,27 +971,27 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 	// Loop
 
 	for (uint v = 0; v < kVoices; ++v) {
-		if (_voice[v].on) {
-			uint16 endOffset = _voice[v].wave->phase2End;
+		if (_voice[v]->_isOn) {
+			uint16 endOffset = _voice[v]->_wave->phase2End;
 
 			if (endOffset == 0)
-				endOffset = _voice[v].wave->phase1End;
+				endOffset = _voice[v]->_wave->phase1End;
 
 			if (fracToUint(offset[v]) > endOffset) {
-				if (_voice[v].wave->phase2End != 0 && _voice[v].noteRange->loop) {
-					uint16 loopSize = endOffset - _voice[v].wave->phase2Start + 1;
+				if (_voice[v]->_wave->phase2End != 0 && _voice[v]->_noteRange->loop) {
+					uint16 loopSize = endOffset - _voice[v]->_wave->phase2Start + 1;
 					do {
 						offset[v] -= uintToFrac(loopSize);
 					} while (fracToUint(offset[v]) > endOffset);
 				} else {
-					voiceOff(v);
+					_voice[v]->noteOff();
 				}
 			}
 		}
 	}
 
 	for (uint v = 0; v < kVoices; ++v)
-		_voice[v].pos = offset[v];
+		_voice[v]->_pos = offset[v];
 
 }
 
