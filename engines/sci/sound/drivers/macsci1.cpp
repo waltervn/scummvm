@@ -441,95 +441,6 @@ void MidiDriver_MacSci1::freeInstruments() {
 	_instruments.clear();
 }
 
-void MidiDriver_MacSci1::Voice::processEnvelope() {
-	const NoteRange *noteRange = _noteRange;
-	byte attackTarget = noteRange->attackTarget;
-	byte decayTarget = noteRange->decayTarget;
-
-	if (!noteRange->loop) {
-		_envCurVel = attackTarget;
-		return;
-	}
-
-	if (_isReleased)
-		_envState = kEnvStateRelease;
-
-	switch(_envState) {
-	case kEnvStateAttack: {
-		if (_envCntDown != 0) {
-			--_envCntDown;
-			return;
-		}
-		byte attackSpeed = noteRange->attackSpeed;
-		_envCntDown = envSpeedToSkip[attackSpeed];
-		_envCurVel += envSpeedToStep[attackSpeed];
-		if (_envCurVel >= attackTarget) {
-			_envCurVel = attackTarget;
-			_envState = kEnvStateDecay;
-		}
-		break;
-	}
-	case kEnvStateDecay: {
-		if (_envCntDown != 0) {
-			--_envCntDown;
-			return;
-		}
-		byte decaySpeed = noteRange->decaySpeed;
-		_envCntDown = envSpeedToSkip[decaySpeed];
-		_envCurVel -= envSpeedToStep[decaySpeed];
-		if (_envCurVel <= decayTarget) {
-			_envCurVel = decayTarget;
-			_envState = kEnvStateSustain;
-		}
-		break;
-	}
-	case kEnvStateSustain:
-		_envCurVel = decayTarget;
-		break;
-	case kEnvStateRelease: {
-		if (_envCntDown != 0) {
-			--_envCntDown;
-			return;
-		}
-		byte releaseSpeed = noteRange->releaseSpeed;
-		_envCntDown = envSpeedToSkip[releaseSpeed];
-		_envCurVel -= envSpeedToStep[releaseSpeed];
-		if (_envCurVel <= 0)
-			noteOff();
-	}
-	}
-}
-
-void MidiDriver_MacSci1::Voice::calcMixVelocity() {
-	byte chanVol = _driver._channel[_channel].volume;
-	byte voiceVelocity = _velocity;
-
-	if (chanVol != 0) {
-		if (voiceVelocity != 0) {
-			voiceVelocity = voiceVelocity * chanVol / 63;
-			if (_envCurVel != 0) {
-				voiceVelocity = voiceVelocity * _envCurVel / 63;
-				if (_driver._masterVolume != 0) {
-					voiceVelocity = voiceVelocity * (_driver._masterVolume << 2) / 63;
-					if (voiceVelocity == 0)
-						++voiceVelocity;
-				} else {
-					voiceVelocity = 0;
-				}
-			} else {
-				voiceVelocity = 0;
-			}
-		}
-	} else {
-		voiceVelocity = 0;
-	}
-
-	if (!_driver._playSwitch)
-		voiceVelocity = 0;
-
-	_mixVelocity = voiceVelocity;
-}
-
 void MidiDriver_MacSci1::onTimer() {
 	// This callback is 250Hz and we need 60Hz for doEnvelope()
 	_timerCounter += _timerIncrease;
@@ -807,6 +718,95 @@ bool MidiDriver_MacSci1::Voice::calcVoiceStep() {
 
 	_step = step;
 	return true;
+}
+
+void MidiDriver_MacSci1::Voice::processEnvelope() {
+	const NoteRange *noteRange = _noteRange;
+	byte attackTarget = noteRange->attackTarget;
+	byte decayTarget = noteRange->decayTarget;
+
+	if (!noteRange->loop) {
+		_envCurVel = attackTarget;
+		return;
+	}
+
+	if (_isReleased)
+		_envState = kEnvStateRelease;
+
+	switch(_envState) {
+	case kEnvStateAttack: {
+		if (_envCntDown != 0) {
+			--_envCntDown;
+			return;
+		}
+		byte attackSpeed = noteRange->attackSpeed;
+		_envCntDown = envSpeedToSkip[attackSpeed];
+		_envCurVel += envSpeedToStep[attackSpeed];
+		if (_envCurVel >= attackTarget) {
+			_envCurVel = attackTarget;
+			_envState = kEnvStateDecay;
+		}
+		break;
+	}
+	case kEnvStateDecay: {
+		if (_envCntDown != 0) {
+			--_envCntDown;
+			return;
+		}
+		byte decaySpeed = noteRange->decaySpeed;
+		_envCntDown = envSpeedToSkip[decaySpeed];
+		_envCurVel -= envSpeedToStep[decaySpeed];
+		if (_envCurVel <= decayTarget) {
+			_envCurVel = decayTarget;
+			_envState = kEnvStateSustain;
+		}
+		break;
+	}
+	case kEnvStateSustain:
+		_envCurVel = decayTarget;
+		break;
+	case kEnvStateRelease: {
+		if (_envCntDown != 0) {
+			--_envCntDown;
+			return;
+		}
+		byte releaseSpeed = noteRange->releaseSpeed;
+		_envCntDown = envSpeedToSkip[releaseSpeed];
+		_envCurVel -= envSpeedToStep[releaseSpeed];
+		if (_envCurVel <= 0)
+			noteOff();
+	}
+	}
+}
+
+void MidiDriver_MacSci1::Voice::calcMixVelocity() {
+	byte chanVol = _driver._channel[_channel].volume;
+	byte voiceVelocity = _velocity;
+
+	if (chanVol != 0) {
+		if (voiceVelocity != 0) {
+			voiceVelocity = voiceVelocity * chanVol / 63;
+			if (_envCurVel != 0) {
+				voiceVelocity = voiceVelocity * _envCurVel / 63;
+				if (_driver._masterVolume != 0) {
+					voiceVelocity = voiceVelocity * (_driver._masterVolume << 2) / 63;
+					if (voiceVelocity == 0)
+						++voiceVelocity;
+				} else {
+					voiceVelocity = 0;
+				}
+			} else {
+				voiceVelocity = 0;
+			}
+		}
+	} else {
+		voiceVelocity = 0;
+	}
+
+	if (!_driver._playSwitch)
+		voiceVelocity = 0;
+
+	_mixVelocity = voiceVelocity;
 }
 
 void MidiDriver_MacSci1::noteOn(int8 channel, int8 note, int8 velocity) {
