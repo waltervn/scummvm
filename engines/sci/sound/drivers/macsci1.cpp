@@ -154,23 +154,14 @@ private:
 	const Wave *loadWave(Common::SeekableReadStream &stream);
 	bool loadInstruments(Common::SeekableReadStream &patch);
 	void freeInstruments();
-	int8 findVoice(int8 channel);
-	void voiceMapping(int8 channel, byte voices);
-	void assignVoices(int8 channel, byte voices);
-	void releaseVoices(int8 channel, byte voices);
 	void donateVoices();
-	void noteOn(int8 channel, int8 note, int8 velocity);
-	void noteOff(int8 channel, int8 note);
-	void changePatch(int8 channel, int8 patch);
-	void holdPedal(int8 channel, int8 pedal);
-	void setPitchWheel(int8 channel, uint16 pitch);
 	void generateSampleChunk(int16 *buf, int len);
 
-	struct Channel;
+	class Channel;
 	class Voice {
 	public:
 		Voice(MidiDriver_MacSci1 &driver) :
-			_channel(-1),
+			_channel(nullptr),
 			_note(-1),
 			_velocity(0),
 			_isReleased(false),
@@ -197,7 +188,7 @@ private:
 		void calcMixVelocity();
 		void processEnvelope();
 
-		int8 _channel;
+		Channel *_channel;
 		int8 _note;
 		byte _velocity;
 		bool _isReleased;
@@ -221,20 +212,48 @@ private:
 		MidiDriver_MacSci1 &_driver;
 	};
 
-	Voice *_voice[kVoices];
+	Common::Array<Voice *> _voices;
+	typedef Common::Array<Voice *>::const_iterator VoiceIt;
 
-	struct Channel {
-		int8 patch;
-		uint16 pitch;
-		bool hold;
-		int8 volume;
-		int8 lastVoice;
-		byte extraVoices;
-	} _channel[MIDI_CHANNELS];
+	class Channel {
+	public:
+		Channel(MidiDriver_MacSci1 &driver) :
+			_patch(0),
+			_pitch(0x2000),
+			_hold(false),
+			_volume(63),
+			_lastVoiceIt(driver._voices.begin()),
+			_extraVoices(0),
+			_driver(driver) { }
+
+		void noteOn(int8 note, int8 velocity);
+		void noteOff(int8 note);
+
+		Voice *findVoice();
+		void voiceMapping(byte voices);
+		void assignVoices(byte voices);
+		void releaseVoices(byte voices);
+		void changePatch(int8 patch);
+		void holdPedal(int8 pedal);
+		void setPitchWheel(uint16 pitch);
+
+		int8 _patch;
+		uint16 _pitch;
+		bool _hold;
+		int8 _volume;
+		VoiceIt _lastVoiceIt;
+		byte _extraVoices;
+
+	private:
+		MidiDriver_MacSci1 &_driver;
+	};
+
+	Common::Array<Channel *> _channels;
+	typedef Common::Array<Channel *>::const_iterator ChanIt;
 };
 
 MidiDriver_MacSci1::MidiDriver_MacSci1(Audio::Mixer *mixer) : MidiDriver_Emulated(mixer),
-	_playSwitch(true), _masterVolume(15), _timerCounter(0), _voice() {
+	_playSwitch(true), _masterVolume(15), _timerCounter(0) {
 	_timerIncrease = getBaseTempo();
 }
 
@@ -245,18 +264,6 @@ MidiDriver_MacSci1::~MidiDriver_MacSci1() {
 int MidiDriver_MacSci1::open() {
 	if (_isOpen)
 		return MERR_ALREADY_OPEN;
-
-	for (uint v = 0; v < ARRAYSIZE(_voice); ++v)
-		_voice[v] = new Voice(*this);
-
-	for (uint ch = 0; ch < MIDI_CHANNELS; ++ch) {
-		_channel[ch].patch = 0;
-		_channel[ch].pitch = 0x2000;
-		_channel[ch].hold = false;
-		_channel[ch].volume = 63;
-		_channel[ch].lastVoice = 0;
-		_channel[ch].extraVoices = 0;
-	}
 
 	const Resource *patch = g_sci->getResMan()->findResource(ResourceId(kResourceTypePatch, 7), false);
 	if (!patch) {
@@ -269,6 +276,14 @@ int MidiDriver_MacSci1::open() {
 		freeInstruments();
 		return MERR_DEVICE_NOT_AVAILABLE;
 	}
+
+	_voices.resize(kVoices);
+	for (Common::Array<Voice *>::iterator v = _voices.begin(); v != _voices.end(); ++v)
+		*v = new Voice(*this);
+
+	_channels.resize(MIDI_CHANNELS);
+	for (Common::Array<Channel *>::iterator ch = _channels.begin(); ch != _channels.end(); ++ch)
+		*ch = new Channel(*this);
 
 	MidiDriver_Emulated::open();
 
@@ -283,8 +298,13 @@ void MidiDriver_MacSci1::close() {
 
 	_mixer->stopHandle(_mixerSoundHandle);
 
-	for (uint v = 0; v < ARRAYSIZE(_voice); ++v)
-		delete _voice[v];
+	for (ChanIt c = _channels.begin(); c != _channels.end(); ++c)
+		delete *c;
+	_channels.clear();
+
+	for (VoiceIt v = _voices.begin(); v != _voices.end(); ++v)
+		delete *v;
+	_voices.clear();
 
 	freeInstruments();
 
@@ -450,96 +470,111 @@ void MidiDriver_MacSci1::onTimer() {
 
 	_timerCounter -= kTimerThreshold;
 
-	for (uint v = 0; v < kVoices; ++v) {
-		if (_voice[v]->_note != -1) {
-			++_voice[v]->_ticks;
-			if (_voice[v]->_isReleased)
-				++_voice[v]->_releaseTicks;
-			_voice[v]->processEnvelope();
-			_voice[v]->calcMixVelocity();
+	for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it) {
+		Voice *v = *it;
+		if (v->_note != -1) {
+			++v->_ticks;
+			if (v->_isReleased)
+				++v->_releaseTicks;
+			v->processEnvelope();
+			v->calcMixVelocity();
 		}
 	}
 }
 
-int8 MidiDriver_MacSci1::findVoice(int8 channel) {
-	int8 voice = _channel[channel].lastVoice;
+MidiDriver_MacSci1::Voice *MidiDriver_MacSci1::Channel::findVoice() {
+	assert(_lastVoiceIt != _driver._voices.end());
+
+	VoiceIt voiceIt = _lastVoiceIt;
 	uint16 maxTicks = 0;
-	int8 maxTicksVoice = -1;
+	VoiceIt maxTicksVoiceIt = _driver._voices.end();
 
 	do {
-		voice = (voice + 1) % kVoices;
+		++voiceIt;
 
-		if (_voice[voice]->_channel == channel) {
-			if (_voice[voice]->_note == -1) {
-				_channel[channel].lastVoice = voice;
-				return voice;
+		if (voiceIt == _driver._voices.end())
+			voiceIt = _driver._voices.begin();
+
+		Voice *v = *voiceIt;
+
+		if (v->_channel == this) {
+			if (v->_note == -1) {
+				_lastVoiceIt = voiceIt;
+				return v;
 			}
+
 			uint16 ticks;
-			if (_voice[voice]->_releaseTicks != 0)
-				ticks = _voice[voice]->_releaseTicks + 0x8000;
+
+			if (v->_releaseTicks != 0)
+				ticks = v->_releaseTicks + 0x8000;
 			else
-				ticks = _voice[voice]->_ticks;
+				ticks = v->_ticks;
 
 			if (ticks >= maxTicks) {
 				maxTicks = ticks;
-				maxTicksVoice = voice;
+				maxTicksVoiceIt = voiceIt;
 			}
 		}
-	} while (voice != _channel[channel].lastVoice);
+	} while (voiceIt != _lastVoiceIt);
 
-	if (maxTicksVoice != -1) {
-		_voice[maxTicksVoice]->noteOff();
-		_channel[channel].lastVoice = maxTicksVoice;
-		return maxTicksVoice;
+	if (maxTicksVoiceIt != _driver._voices.end()) {
+		(*maxTicksVoiceIt)->noteOff();
+		_lastVoiceIt = maxTicksVoiceIt;
+		return *maxTicksVoiceIt;
 	}
 
-	return -1;
+	return nullptr;
 }
 
-void MidiDriver_MacSci1::voiceMapping(int8 channel, byte voices) {
+void MidiDriver_MacSci1::Channel::voiceMapping(byte voices) {
 	int curVoices = 0;
 
-	for (uint v = 0; v < kVoices; ++v)
-		if (_voice[v]->_channel == channel)
+	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it)
+		if ((*it)->_channel == this)
 			curVoices++;
 
-	curVoices += _channel[channel].extraVoices;
+	curVoices += _extraVoices;
 
 	if (curVoices < voices)
-		assignVoices(channel, voices - curVoices);
+		assignVoices(voices - curVoices);
 	else if (curVoices > voices) {
-		releaseVoices(channel, curVoices - voices);
-		donateVoices();
+		releaseVoices(curVoices - voices);
+		_driver.donateVoices();
 	}
 }
 
-void MidiDriver_MacSci1::assignVoices(int8 channel, byte voices) {
-	for (uint v = 0; v < kVoices; ++v)
-		if (_voice[v]->_channel == -1) {
-			_voice[v]->_channel = channel;
+void MidiDriver_MacSci1::Channel::assignVoices(byte voices) {
+	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it) {
+		Voice *v = *it;
 
-			if (_voice[v]->_note != -1)
-				_voice[v]->noteOff();
+		if (!v->_channel) {
+			v->_channel = this;
+
+			if (v->_note != -1)
+				v->noteOff();
 
 			if (--voices == 0)
 				break;
 		}
+	}
 
-	_channel[channel].extraVoices += voices;
+	_extraVoices += voices;
 }
 
-void MidiDriver_MacSci1::releaseVoices(int8 channel, byte voices) {
-	if (_channel[channel].extraVoices >= voices) {
-		_channel[channel].extraVoices -= voices;
+void MidiDriver_MacSci1::Channel::releaseVoices(byte voices) {
+	if (_extraVoices >= voices) {
+		_extraVoices -= voices;
 		return;
 	}
 
-	voices -= _channel[channel].extraVoices;
-	_channel[channel].extraVoices = 0;
+	voices -= _extraVoices;
+	_extraVoices = 0;
 
-	for (uint v = 0; v < kVoices; ++v) {
-		if ((_voice[v]->_channel == channel) && (_voice[v]->_note == -1)) {
-			_voice[v]->_channel = -1;
+	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it) {
+		Voice *v = *it;
+
+		if ((v->_channel == this) && (v->_note == -1)) {
+			v->_channel = nullptr;
 			if (--voices == 0)
 				return;
 		}
@@ -547,17 +582,19 @@ void MidiDriver_MacSci1::releaseVoices(int8 channel, byte voices) {
 
 	do {
 		uint16 maxTicks = 0;
-		int8 maxTicksVoice = 0;
+		Voice *maxTicksVoice;
 
-		for (uint v = 0; v < kVoices; ++v) {
-			if (_voice[v]->_channel == channel) {
+		for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it) {
+			Voice *v = *it;
+
+			if (v->_channel == this) {
 				// The original code seems to be broken here. It reads a word value from
 				// byte array _voiceSustained.
-				uint16 ticks = _voice[v]->_releaseTicks;
+				uint16 ticks = v->_releaseTicks;
 				if (ticks > 0)
 					ticks += 0x8000;
 				else
-					ticks = _voice[v]->_ticks;
+					ticks = v->_ticks;
 
 				if (ticks >= maxTicks) {
 					maxTicks = ticks;
@@ -565,33 +602,35 @@ void MidiDriver_MacSci1::releaseVoices(int8 channel, byte voices) {
 				}
 			}
 		}
-		_voice[maxTicksVoice]->_isSustained = false;
-		_voice[maxTicksVoice]->noteOff();
-		_voice[maxTicksVoice]->_channel = -1;
+		maxTicksVoice->_isSustained = false;
+		maxTicksVoice->noteOff();
+		maxTicksVoice->_channel = nullptr;
 	} while (--voices > 0);
 }
 
 void MidiDriver_MacSci1::donateVoices() {
 	int freeVoices = 0;
 
-	for (uint v = 0; v < kVoices; ++v)
-		if (_voice[v]->_channel == -1)
+	for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it)
+		if (!(*it)->_channel)
 			freeVoices++;
 
 	if (freeVoices == 0)
 		return;
 
-	for (int ch = 0; ch < MIDI_CHANNELS; ++ch) {
-		if (_channel[ch].extraVoices != 0) {
-			if (_channel[ch].extraVoices >= freeVoices) {
-				_channel[ch].extraVoices -= freeVoices;
-				assignVoices(ch, freeVoices);
+	for (ChanIt it = _channels.begin(); it != _channels.end(); ++it) {
+		Channel *channel = *it;
+
+		if (channel->_extraVoices != 0) {
+			if (channel->_extraVoices >= freeVoices) {
+				channel->_extraVoices -= freeVoices;
+				channel->assignVoices(freeVoices);
 				return;
 			} else {
-				freeVoices -= _channel[ch].extraVoices;
-				byte extraVoices = _channel[ch].extraVoices;
-				_channel[ch].extraVoices = 0;
-				assignVoices(ch, extraVoices);
+				freeVoices -= channel->_extraVoices;
+				byte extraVoices = channel->_extraVoices;
+				channel->_extraVoices = 0;
+				channel->assignVoices(extraVoices);
 			}
 		}
 	}
@@ -605,7 +644,7 @@ void MidiDriver_MacSci1::Voice::noteOn(int8 note, int8 velocity) {
 	_ticks = 0;
 	_releaseTicks = 0;
 
-	int8 patchId = _driver._channel[_channel].patch;
+	int8 patchId = _channel->_patch;
 
 	// Check for valid patch
 	if (patchId < 0 || (uint)patchId >= _driver._instruments.size() || !_driver._instruments[patchId])
@@ -660,8 +699,7 @@ void MidiDriver_MacSci1::Voice::noteOff() {
 
 ufrac_t MidiDriver_MacSci1::Voice::calcStep(int8 note, const NoteRange *noteRange, const Wave *wave, const ufrac_t *stepTable) {
 	uint16 noteAdj = note + 127 - wave->nativeNote;
-	byte channel = _channel;
-	uint16 pitch = _driver._channel[channel].pitch;
+	uint16 pitch = _channel->_pitch;
 	pitch /= 170;
 	noteAdj += (pitch >> 2) - 12;
 	byte offset = pitch & 3;
@@ -780,7 +818,7 @@ void MidiDriver_MacSci1::Voice::processEnvelope() {
 }
 
 void MidiDriver_MacSci1::Voice::calcMixVelocity() {
-	byte chanVol = _driver._channel[_channel].volume;
+	byte chanVol = _channel->_volume;
 	byte voiceVelocity = _velocity;
 
 	if (chanVol != 0) {
@@ -809,78 +847,87 @@ void MidiDriver_MacSci1::Voice::calcMixVelocity() {
 	_mixVelocity = voiceVelocity;
 }
 
-void MidiDriver_MacSci1::noteOn(int8 channel, int8 note, int8 velocity) {
+void MidiDriver_MacSci1::Channel::noteOn(int8 note, int8 velocity) {
 	if (velocity == 0) {
-		noteOff(channel, note);
+		noteOff(note);
 		return;
 	}
 
-	for (uint v = 0; v < kVoices; ++v) {
-		if (_voice[v]->_channel == channel && _voice[v]->_note == note) {
-			_voice[v]->_isSustained = false;
-			_voice[v]->noteOff();
-			_voice[v]->noteOn(note, velocity);
+	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it) {
+		Voice *v = *it;
+
+		if (v->_channel == this && v->_note == note) {
+			v->_isSustained = false;
+			v->noteOff();
+			v->noteOn(note, velocity);
 			return;
 		}
 	}
 
-	int8 voice = findVoice(channel);
-	if (voice != -1)
-		_voice[voice]->noteOn(note, velocity);
+	Voice *v = findVoice();
+	if (v)
+		v->noteOn(note, velocity);
 }
 
-void MidiDriver_MacSci1::noteOff(int8 channel, int8 note) {
-	for (uint v = 0; v < kVoices; ++v) {
-		if (_voice[v]->_channel == channel && _voice[v]->_note == note) {
-			if (_channel[channel].hold)
-				_voice[v]->_isSustained = true;
+void MidiDriver_MacSci1::Channel::noteOff(int8 note) {
+	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it) {
+		Voice *v = *it;
+
+		if (v->_channel == this && v->_note == note) {
+			if (_hold)
+				v->_isSustained = true;
 			else {
-				_voice[v]->_isReleased = true;
-				_voice[v]->_envCntDown = 0;
+				v->_isReleased = true;
+				v->_envCntDown = 0;
 			}
 			return;
 		}
 	}
 }
 
-void MidiDriver_MacSci1::changePatch(int8 channel, int8 patch) {
-	_channel[channel].patch = patch;
+void MidiDriver_MacSci1::Channel::changePatch(int8 patch) {
+	_patch = patch;
 }
 
-void MidiDriver_MacSci1::holdPedal(int8 channel, int8 pedal) {
-	_channel[channel].hold = pedal;
+void MidiDriver_MacSci1::Channel::holdPedal(int8 pedal) {
+	_hold = pedal;
 
 	if (pedal != 0)
 		return;
 
-	for (uint voice = 0; voice < kVoices; ++voice) {
-		if (_voice[voice]->_channel == channel && _voice[voice]->_isSustained) {
-			_voice[voice]->_isSustained = false;
-			_voice[voice]->_isReleased = true;
+	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it) {
+		Voice *v = *it;
+
+		if (v->_channel == this && v->_isSustained) {
+			v->_isSustained = false;
+			v->_isReleased = true;
 		}
 	}
 }
 
-void MidiDriver_MacSci1::setPitchWheel(int8 channel, uint16 pitch) {
-	_channel[channel].pitch = pitch;
+void MidiDriver_MacSci1::Channel::setPitchWheel(uint16 pitch) {
+	_pitch = pitch;
 
-	for (uint v = 0; v < kVoices; ++v)
-		if (_voice[v]->_note != -1 && _voice[v]->_channel == channel)
-			_voice[v]->calcVoiceStep();
+	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it) {
+		Voice *v = *it;
+
+		if (v->_note != -1 && v->_channel == this)
+			v->calcVoiceStep();
+	}
 }
 
 void MidiDriver_MacSci1::send(uint32 b) {
 	byte command = b & 0xf0;
-	byte channel = b & 0xf;
+	Channel *channel = _channels[b & 0xf];
 	byte op1 = (b >> 8) & 0xff;
 	byte op2 = (b >> 16) & 0xff;
 
 	switch(command) {
 	case 0x80:
-		noteOff(channel, op1);
+		channel->noteOff(op1);
 		break;
 	case 0x90:
-		noteOn(channel, op1, op2);
+		channel->noteOn(op1, op2);
 		break;
 	case 0xb0:
 		switch (op1) {
@@ -890,26 +937,28 @@ void MidiDriver_MacSci1::send(uint32 b) {
 				if (op2 == 0)
 					++op2;
 			}
-			_channel[channel].volume = op2;
+			channel->_volume = op2;
 			break;
 		case 0x40:
-			holdPedal(channel, op2);
+			channel->holdPedal(op2);
 			break;
 		case 0x4b:
-			voiceMapping(channel, op2);
+			channel->voiceMapping(op2);
 			break;
 		case 0x7b:
-			for (uint voice = 0; voice < kVoices; ++voice) {
-				if (_voice[voice]->_channel == channel && _voice[voice]->_note != -1)
-					_voice[voice]->noteOff();
+			for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it) {
+				Voice *v = *it;
+
+				if (v->_channel == channel && v->_note != -1)
+					v->noteOff();
 			}
 		}
 		break;
 	case 0xc0:
-		changePatch(channel, op1);
+		channel->changePatch(op1);
 		break;
 	case 0xe0:
-		setPitchWheel(channel, (op2 << 7) | op1);
+		channel->setPitchWheel((op2 << 7) | op1);
 		break;
 	}
 }
@@ -934,20 +983,22 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 
 	assert(len > 0 && len <= 186);
 
-	for (uint v = 0; v < kVoices; ++v) {
-		if (_voice[v]->_isOn) {
-			samples[v] = _voice[v]->_wave->samples;
-			offset[v] = _voice[v]->_pos;
+	for (uint vi = 0; vi < kVoices; ++vi) {
+		Voice *v = _voices[vi];
+
+		if (v->_isOn) {
+			samples[vi] = v->_wave->samples;
+			offset[vi] = v->_pos;
 
 			// Sanity checks
-			assert(_voice[v]->_step <= uintToFrac(8));
-			const uint16 firstIndex = fracToUint(_voice[v]->_pos);
-			const uint16 lastIndex = fracToUint(_voice[v]->_pos + (len - 1) * _voice[v]->_step);
-			assert(lastIndex >= firstIndex && lastIndex < _voice[v]->_wave->size);
+			assert(v->_step <= uintToFrac(8));
+			const uint16 firstIndex = fracToUint(v->_pos);
+			const uint16 lastIndex = fracToUint(v->_pos + (len - 1) * v->_step);
+			assert(lastIndex >= firstIndex && lastIndex < v->_wave->size);
 		} else {
-			samples[v] = &silence;
-			offset[v] = 0;
-			_voice[v]->_step = 0;
+			samples[vi] = &silence;
+			offset[vi] = 0;
+			v->_step = 0;
 		}
 	}
 
@@ -955,11 +1006,11 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 
 	for (uint i = 0; i < len; ++i) {
 		uint16 mix = 0;
-		for (int v = 0; v < kVoices; ++v) {
-			uint16 curOffset = fracToUint(offset[v]);
-			byte sample = samples[v][curOffset];
-			mix += applyVelocity(_voice[v]->_mixVelocity, sample);
-			offset[v] += _voice[v]->_step;
+		for (int vi = 0; vi < kVoices; ++vi) {
+			uint16 curOffset = fracToUint(offset[vi]);
+			byte sample = samples[vi][curOffset];
+			mix += applyVelocity(_voices[vi]->_mixVelocity, sample);
+			offset[vi] += _voices[vi]->_step;
 		}
 
 		mix = CLIP<uint16>(mix, 384, 639) - 384;
@@ -970,28 +1021,30 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 
 	// Loop
 
-	for (uint v = 0; v < kVoices; ++v) {
-		if (_voice[v]->_isOn) {
-			uint16 endOffset = _voice[v]->_wave->phase2End;
+	for (uint vi = 0; vi < kVoices; ++vi) {
+		Voice *v = _voices[vi];
+
+		if (v->_isOn) {
+			uint16 endOffset = v->_wave->phase2End;
 
 			if (endOffset == 0)
-				endOffset = _voice[v]->_wave->phase1End;
+				endOffset = v->_wave->phase1End;
 
-			if (fracToUint(offset[v]) > endOffset) {
-				if (_voice[v]->_wave->phase2End != 0 && _voice[v]->_noteRange->loop) {
-					uint16 loopSize = endOffset - _voice[v]->_wave->phase2Start + 1;
+			if (fracToUint(offset[vi]) > endOffset) {
+				if (v->_wave->phase2End != 0 && v->_noteRange->loop) {
+					uint16 loopSize = endOffset - v->_wave->phase2Start + 1;
 					do {
-						offset[v] -= uintToFrac(loopSize);
-					} while (fracToUint(offset[v]) > endOffset);
+						offset[vi] -= uintToFrac(loopSize);
+					} while (fracToUint(offset[vi]) > endOffset);
 				} else {
-					_voice[v]->noteOff();
+					v->noteOff();
 				}
 			}
 		}
 	}
 
-	for (uint v = 0; v < kVoices; ++v)
-		_voice[v]->_pos = offset[v];
+	for (uint vi = 0; vi < kVoices; ++vi)
+		_voices[vi]->_pos = offset[vi];
 
 }
 
