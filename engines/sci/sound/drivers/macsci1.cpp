@@ -20,10 +20,11 @@
  *
  */
 
-#include "audio/softsynth/emumidi.h"
 #include "sci/sound/drivers/mididriver.h"
 #include "sci/resource.h"
 
+#include "audio/audiostream.h"
+#include "audio/mixer.h"
 #include "common/debug-channels.h"
 #include "common/file.h"
 #include "common/memstream.h"
@@ -35,8 +36,8 @@ namespace Sci {
 
 // Unsigned version of frac_t
 typedef uint32 ufrac_t;
-static inline ufrac_t uintToFrac(uint16 value) { return value << 16; }
-static inline uint16 fracToUint(ufrac_t value) { return value >> 16; }
+static inline ufrac_t uintToUfrac(uint16 value) { return value << 16; }
+static inline uint16 ufracToUint(ufrac_t value) { return value >> 16; }
 
 static const byte envSpeedToStep[32] = {
 	0x40, 0x32, 0x24, 0x18, 0x14, 0x0f, 0x0d, 0x0b, 0x09, 0x08, 0x07, 0x06, 0x05, 0x0a, 0x04, 0x03,
@@ -55,11 +56,13 @@ static const byte velocityMap[64] = {
 	0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x34, 0x35, 0x37, 0x39, 0x3a, 0x3c, 0x3e, 0x40
 };
 
-class MidiDriver_MacSci1 : public MidiDriver_Emulated {
+class MidiDriver_MacSci1 : public MidiDriver, Audio::AudioStream {
 public:
 	enum {
 		kVoices = 4,
-		kStepTableSize = 56
+		kStepTableSize = 56,
+		kSampleChunkSize = 186,
+		kBaseFreq = 60
 	};
 
 	enum kEnvState {
@@ -74,31 +77,27 @@ public:
 
 	// MidiDriver
 	int open();
+	bool isOpen() const { return _isOpen; }
 	void close();
 	void send(uint32 b);
+	void setTimerCallback(void *timer_param, Common::TimerManager::TimerProc timer_proc);
+	uint32 getBaseTempo() { return (1000000 + kBaseFreq / 2) / kBaseFreq; }
+
 	MidiChannel *allocateChannel() { return NULL; }
 	MidiChannel *getPercussionChannel() { return NULL; }
 
 	// AudioStream
 	bool isStereo() const { return false; }
 	int getRate() const { return 11127; }
-
-	// MidiDriver_Emulated
-	void generateSamples(int16 *buf, int len);
-	void onTimer();
+	int readBuffer(int16 *data, const int numSamples);
+	bool endOfData() const { return false; }
 
 	void setVolume(byte volume) { }
 	void playSwitch(bool play) { }
 	virtual uint32 property(int prop, uint32 param) { return 0; }
+	void onTimer();
 
 private:
-	enum {
-		kTimerThreshold = 16667
-	};
-
-	uint32 _timerIncrease;
-	uint32 _timerCounter;
-
 	struct Wave {
 		Wave() : name(), phase1Start(0), phase1End(0), phase2Start(0), phase2End(0),
 				 nativeNote(0), stepTable(nullptr), samples(nullptr), size(0) { }
@@ -151,11 +150,19 @@ private:
 	bool _playSwitch;
 	uint _masterVolume;
 
+	Audio::Mixer *_mixer;
+	Audio::SoundHandle _mixerSoundHandle;
+	Common::TimerManager::TimerProc _timerProc;
+	void *_timerParam;
+	ufrac_t _nextTick;
+	ufrac_t _samplesPerTick;
+	bool _isOpen;
+
 	const Wave *loadWave(Common::SeekableReadStream &stream);
 	bool loadInstruments(Common::SeekableReadStream &patch);
 	void freeInstruments();
 	void donateVoices();
-	void generateSampleChunk(int16 *buf, int len);
+	void generateSamples(int16 *buf, int len);
 
 	class Channel;
 	class Voice {
@@ -252,10 +259,16 @@ private:
 	typedef Common::Array<Channel *>::const_iterator ChanIt;
 };
 
-MidiDriver_MacSci1::MidiDriver_MacSci1(Audio::Mixer *mixer) : MidiDriver_Emulated(mixer),
-	_playSwitch(true), _masterVolume(15), _timerCounter(0) {
-	_timerIncrease = getBaseTempo();
-}
+MidiDriver_MacSci1::MidiDriver_MacSci1(Audio::Mixer *mixer) :
+	_playSwitch(true),
+	_masterVolume(15),
+	_mixer(mixer),
+	_mixerSoundHandle(),
+	_timerProc(),
+	_timerParam(nullptr),
+	_nextTick(0),
+	_samplesPerTick(0),
+	_isOpen(false) { }
 
 MidiDriver_MacSci1::~MidiDriver_MacSci1() {
 	close();
@@ -285,9 +298,11 @@ int MidiDriver_MacSci1::open() {
 	for (Common::Array<Channel *>::iterator ch = _channels.begin(); ch != _channels.end(); ++ch)
 		*ch = new Channel(*this);
 
-	MidiDriver_Emulated::open();
+	_samplesPerTick = uintToUfrac(getRate() / kBaseFreq) + uintToUfrac(getRate() % kBaseFreq) / kBaseFreq;
 
 	_mixer->playStream(Audio::Mixer::kPlainSoundType, &_mixerSoundHandle, this, -1, _mixer->kMaxChannelVolume, 0, DisposeAfterUse::NO);
+
+	_isOpen = true;
 
 	return 0;
 }
@@ -311,15 +326,42 @@ void MidiDriver_MacSci1::close() {
 	_isOpen = false;
 }
 
-void MidiDriver_MacSci1::generateSamples(int16 *data, int len) {
-	while (len > 0) {
-		int chunkLen = 186;
-		if (len < 186)
-			chunkLen = len;
-		generateSampleChunk(data, chunkLen);
-		data += chunkLen;
-		len -= chunkLen;
-	}
+void MidiDriver_MacSci1::setTimerCallback(void *timer_param, Common::TimerManager::TimerProc timer_proc) {
+	_timerProc = timer_proc;
+	_timerParam = timer_param;
+}
+
+int MidiDriver_MacSci1::readBuffer(int16 *data, const int numSamples) {
+	const int stereoFactor = isStereo() ? 2 : 1;
+	int len = numSamples / stereoFactor;
+	int step;
+
+	do {
+		step = len;
+		if (step > ufracToUint(_nextTick))
+			step = ufracToUint(_nextTick);
+
+		if (step > kSampleChunkSize)
+			step = kSampleChunkSize;
+
+		if (step > 0)
+			generateSamples(data, step);
+
+		_nextTick -= uintToUfrac(step);
+		if (ufracToUint(_nextTick) == 0) {
+			if (_timerProc)
+				(*_timerProc)(_timerParam);
+
+			onTimer();
+
+			_nextTick += _samplesPerTick;
+		}
+
+		data += step * stereoFactor;
+		len -= step;
+	} while (len);
+
+	return numSamples;
 }
 
 const MidiDriver_MacSci1::Wave *MidiDriver_MacSci1::loadWave(Common::SeekableReadStream &stream) {
@@ -462,14 +504,6 @@ void MidiDriver_MacSci1::freeInstruments() {
 }
 
 void MidiDriver_MacSci1::onTimer() {
-	// This callback is 250Hz and we need 60Hz for doEnvelope()
-	_timerCounter += _timerIncrease;
-
-	if (_timerCounter <= kTimerThreshold)
-		return;
-
-	_timerCounter -= kTimerThreshold;
-
 	for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it) {
 		Voice *v = *it;
 		if (v->_note != -1) {
@@ -669,7 +703,7 @@ void MidiDriver_MacSci1::Voice::noteOn(int8 note, int8 velocity) {
 	_noteRange = noteRange;
 	_wave = wave;
 	_stepTable = stepTable;
-	_pos = uintToFrac(wave->phase1Start);
+	_pos = uintToUfrac(wave->phase1Start);
 
 	if (velocity != 0)
 		velocity = velocityMap[velocity >> 1];
@@ -734,7 +768,7 @@ ufrac_t MidiDriver_MacSci1::Voice::calcStep(int8 note, const NoteRange *noteRang
 	}
 
 	// This ensures that we won't step outside of the sample data
-	if (step > uintToFrac(8))
+	if (step > uintToUfrac(8))
 		return -1;
 
 	return step;
@@ -975,13 +1009,13 @@ static byte applyVelocity(byte velocity, byte sample) {
 	return euclDivide((sample - 0x80) * velocity, 63) + 0x80;
 }
 
-void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
+void MidiDriver_MacSci1::generateSamples(int16 *data, int len) {
 	const byte *samples[kVoices] = { };
 	const byte silence = 0x80;
 
 	ufrac_t offset[kVoices];
 
-	assert(len > 0 && len <= 186);
+	assert(len > 0 && len <= kSampleChunkSize);
 
 	for (uint vi = 0; vi < kVoices; ++vi) {
 		Voice *v = _voices[vi];
@@ -991,9 +1025,9 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 			offset[vi] = v->_pos;
 
 			// Sanity checks
-			assert(v->_step <= uintToFrac(8));
-			const uint16 firstIndex = fracToUint(v->_pos);
-			const uint16 lastIndex = fracToUint(v->_pos + (len - 1) * v->_step);
+			assert(v->_step <= uintToUfrac(8));
+			const uint16 firstIndex = ufracToUint(v->_pos);
+			const uint16 lastIndex = ufracToUint(v->_pos + (len - 1) * v->_step);
 			assert(lastIndex >= firstIndex && lastIndex < v->_wave->size);
 		} else {
 			samples[vi] = &silence;
@@ -1007,7 +1041,7 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 	for (uint i = 0; i < len; ++i) {
 		uint16 mix = 0;
 		for (int vi = 0; vi < kVoices; ++vi) {
-			uint16 curOffset = fracToUint(offset[vi]);
+			uint16 curOffset = ufracToUint(offset[vi]);
 			byte sample = samples[vi][curOffset];
 			mix += applyVelocity(_voices[vi]->_mixVelocity, sample);
 			offset[vi] += _voices[vi]->_step;
@@ -1030,12 +1064,12 @@ void MidiDriver_MacSci1::generateSampleChunk(int16 *data, int len) {
 			if (endOffset == 0)
 				endOffset = v->_wave->phase1End;
 
-			if (fracToUint(offset[vi]) > endOffset) {
+			if (ufracToUint(offset[vi]) > endOffset) {
 				if (v->_wave->phase2End != 0 && v->_noteRange->loop) {
 					uint16 loopSize = endOffset - v->_wave->phase2Start + 1;
 					do {
-						offset[vi] -= uintToFrac(loopSize);
-					} while (fracToUint(offset[vi]) > endOffset);
+						offset[vi] -= uintToUfrac(loopSize);
+					} while (ufracToUint(offset[vi]) > endOffset);
 				} else {
 					v->noteOff();
 				}
