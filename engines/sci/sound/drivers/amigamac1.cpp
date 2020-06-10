@@ -361,11 +361,10 @@ const MidiDriver_AmigaMac_BASE::Wave *MidiDriver_AmigaMac_BASE::loadWave(Common:
 bool MidiDriver_AmigaMac_BASE::loadInstruments(Common::SeekableReadStream &patch, bool isEarlyPatch) {
 	_instruments.resize(128);
 
-	if (isEarlyPatch)
-		patch.seek(4);
+	int32 skip = (isEarlyPatch ? 4 : 0);
 
 	for (uint patchIdx = 0; patchIdx < 128; ++patchIdx) {
-		patch.seek(patchIdx * 4);
+		patch.seek(patchIdx * 4 + skip);
 		uint32 offset = patch.readUint32BE();
 
 		if (offset == 0)
@@ -373,7 +372,7 @@ bool MidiDriver_AmigaMac_BASE::loadInstruments(Common::SeekableReadStream &patch
 
 		Instrument *instrument = new Instrument();
 
-		patch.seek(offset);
+		patch.seek(offset + skip);
 		patch.read(instrument->name, 8);
 		instrument->name[8] = 0;
 		patch.skip(2); // Unknown
@@ -410,7 +409,7 @@ bool MidiDriver_AmigaMac_BASE::loadInstruments(Common::SeekableReadStream &patch
 			int32 nextNoteRangePos = patch.pos();
 
 			if (!_waves.contains(waveOffset)) {
-				patch.seek(waveOffset);
+				patch.seek(waveOffset + skip);
 				const Wave *wave = loadWave(patch, isEarlyPatch);
 
 				if (!wave) {
