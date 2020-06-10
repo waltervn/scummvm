@@ -56,7 +56,7 @@ public:
 		kEnvStateRelease
 	};
 
-	MidiPlayer_AmigaMac1(SciVersion version, Audio::Mixer *mixer);
+	MidiPlayer_AmigaMac1(SciVersion version, Audio::Mixer *mixer, uint extraSamples, bool wantSignedSamples);
 	virtual ~MidiPlayer_AmigaMac1();
 
 	// MidiPlayer
@@ -138,8 +138,6 @@ protected:
 	void freeInstruments();
 	void donateVoices();
 	void onTimer();
-	virtual uint extraSamples() const = 0;
-	virtual bool wantSigned() const = 0;
 
 	class Channel;
 	class Voice {
@@ -232,12 +230,15 @@ protected:
 	Common::Array<Channel *> _channels;
 	typedef Common::Array<Channel *>::const_iterator ChanIt;
 
-	static const byte envSpeedToStep[32];
-	static const byte envSpeedToSkip[32];
-	static const byte velocityMap[64];
+	static const byte _envSpeedToStep[32];
+	static const byte _envSpeedToSkip[32];
+	static const byte _velocityMap[64];
+
+	const uint _extraSamples;
+	const bool _wantSignedSamples;
 };
 
-MidiPlayer_AmigaMac1::MidiPlayer_AmigaMac1(SciVersion version, Audio::Mixer *mixer) :
+MidiPlayer_AmigaMac1::MidiPlayer_AmigaMac1(SciVersion version, Audio::Mixer *mixer, uint extraSamples, bool wantSignedSamples) :
 	MidiPlayer(version),
 	_playSwitch(true),
 	_masterVolume(15),
@@ -245,7 +246,9 @@ MidiPlayer_AmigaMac1::MidiPlayer_AmigaMac1(SciVersion version, Audio::Mixer *mix
 	_mixerSoundHandle(),
 	_timerProc(),
 	_timerParam(nullptr),
-	_isOpen(false) {}
+	_isOpen(false),
+	_extraSamples(extraSamples),
+	_wantSignedSamples(wantSignedSamples) {}
 
 MidiPlayer_AmigaMac1::~MidiPlayer_AmigaMac1() {
 	close();
@@ -299,12 +302,12 @@ const MidiPlayer_AmigaMac1::Wave *MidiPlayer_AmigaMac1::loadWave(Common::Seekabl
 	// On Mac, 1480 additional samples are present, rounded up to the next word boundary
 	// This allows for a maximum step of 8 during sample generation without bounds checking
 	// On Amiga, 224 additional samples are present
-	wave->size = ((wave->phase1End + 1) + extraSamples() + 1) & ~1;
+	wave->size = ((wave->phase1End + 1) + _extraSamples + 1) & ~1;
 	byte *samples = new byte[wave->size];
 	stream.read(samples, wave->size);
 	wave->samples = samples;
 
-	if (wantSigned() && !isSigned) {
+	if (_wantSignedSamples && !isSigned) {
 		// The original code uses a signed 16-bit type here, while some samples
 		// exceed INT_MAX in size. In this case, it will change one "random" byte
 		// in memory and then stop converting. We simulate this behaviour here, minus
@@ -312,7 +315,7 @@ const MidiPlayer_AmigaMac1::Wave *MidiPlayer_AmigaMac1::loadWave(Common::Seekabl
 		// The "maincrnh" instrument in Castle of Dr. Brain has an incorrect signedness
 		// flag, but is not actually converted because of its size.
 
-		if (wave->phase1End + extraSamples() <= 0x8000) {
+		if (wave->phase1End + _extraSamples <= 0x8000) {
 			for (uint32 i = 0; i < wave->size; ++i)
 				samples[i] -= 0x80;
 		} else {
@@ -673,8 +676,8 @@ void MidiPlayer_AmigaMac1::Voice::processEnvelope() {
 			return;
 		}
 		byte attackSpeed = noteRange->attackSpeed;
-		_envCntDown = envSpeedToSkip[attackSpeed];
-		_envCurVel += envSpeedToStep[attackSpeed];
+		_envCntDown = _envSpeedToSkip[attackSpeed];
+		_envCurVel += _envSpeedToStep[attackSpeed];
 		if (_envCurVel >= attackTarget) {
 			_envCurVel = attackTarget;
 			_envState = kEnvStateDecay;
@@ -687,8 +690,8 @@ void MidiPlayer_AmigaMac1::Voice::processEnvelope() {
 			return;
 		}
 		byte decaySpeed = noteRange->decaySpeed;
-		_envCntDown = envSpeedToSkip[decaySpeed];
-		_envCurVel -= envSpeedToStep[decaySpeed];
+		_envCntDown = _envSpeedToSkip[decaySpeed];
+		_envCurVel -= _envSpeedToStep[decaySpeed];
 		if (_envCurVel <= decayTarget) {
 			_envCurVel = decayTarget;
 			_envState = kEnvStateSustain;
@@ -704,8 +707,8 @@ void MidiPlayer_AmigaMac1::Voice::processEnvelope() {
 			return;
 		}
 		byte releaseSpeed = noteRange->releaseSpeed;
-		_envCntDown = envSpeedToSkip[releaseSpeed];
-		_envCurVel -= envSpeedToStep[releaseSpeed];
+		_envCntDown = _envSpeedToSkip[releaseSpeed];
+		_envCurVel -= _envSpeedToStep[releaseSpeed];
 		if (_envCurVel <= 0)
 			noteOff();
 	}
@@ -858,17 +861,17 @@ void MidiPlayer_AmigaMac1::send(uint32 b) {
 	}
 }
 
-const byte MidiPlayer_AmigaMac1::envSpeedToStep[32] = {
+const byte MidiPlayer_AmigaMac1::_envSpeedToStep[32] = {
 	0x40, 0x32, 0x24, 0x18, 0x14, 0x0f, 0x0d, 0x0b, 0x09, 0x08, 0x07, 0x06, 0x05, 0x0a, 0x04, 0x03,
 	0x05, 0x02, 0x03, 0x0b, 0x05, 0x09, 0x09, 0x01, 0x02, 0x03, 0x07, 0x05, 0x04, 0x03, 0x03, 0x02
 };
 
-const byte MidiPlayer_AmigaMac1::envSpeedToSkip[32] = {
+const byte MidiPlayer_AmigaMac1::_envSpeedToSkip[32] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
 	0x01, 0x00, 0x01, 0x07, 0x02, 0x05, 0x07, 0x00, 0x01, 0x02, 0x08, 0x08, 0x08, 0x09, 0x0e, 0x0b
 };
 
-const byte MidiPlayer_AmigaMac1::velocityMap[64] = {
+const byte MidiPlayer_AmigaMac1::_velocityMap[64] = {
 	0x01, 0x02, 0x03, 0x03, 0x04, 0x05, 0x05, 0x06, 0x07, 0x08, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
 	0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
 	0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2a,
@@ -894,11 +897,9 @@ public:
 
 private:
 	void generateSamples(int16 *buf, int len);
-	uint extraSamples() const override { return 1480; }
-	bool wantSigned() const override { return false; }
 
-	int euclDivide(int x, int y) const;
-	byte applyVelocity(byte velocity, byte sample) const;
+	static int euclDivide(int x, int y);
+	static byte applyVelocity(byte velocity, byte sample);
 
 	class MacVoice : public MidiPlayer_AmigaMac1::Voice {
 	public:
@@ -928,7 +929,7 @@ private:
 };
 
 MidiPlayer_Mac1::MidiPlayer_Mac1(SciVersion version, Audio::Mixer *mixer) :
-	MidiPlayer_AmigaMac1(version, mixer),
+	MidiPlayer_AmigaMac1(version, mixer, 1480, false),
 	_nextTick(0),
 	_samplesPerTick(0) {}
 
@@ -1074,7 +1075,7 @@ void MidiPlayer_Mac1::MacVoice::play(int8 note, int8 velocity) {
 	_pos = uintToUfrac(_wave->phase1Start);
 
 	if (velocity != 0)
-		velocity = velocityMap[velocity >> 1];
+		velocity = _velocityMap[velocity >> 1];
 
 	_velocity = velocity;
 	_note = note;
@@ -1156,7 +1157,7 @@ bool MidiPlayer_Mac1::MacVoice::calcVoiceStep() {
 	return true;
 }
 
-int MidiPlayer_Mac1::euclDivide(int x, int y) const {
+int MidiPlayer_Mac1::euclDivide(int x, int y) {
 	// Assumes y > 0
 	if (x % y < 0)
 		return x / y - 1;
@@ -1164,7 +1165,7 @@ int MidiPlayer_Mac1::euclDivide(int x, int y) const {
 		return x / y;
 }
 
-byte MidiPlayer_Mac1::applyVelocity(byte velocity, byte sample) const {
+byte MidiPlayer_Mac1::applyVelocity(byte velocity, byte sample) {
 	return euclDivide((sample - 0x80) * velocity, 63) + 0x80;
 }
 
@@ -1182,9 +1183,6 @@ public:
 	void interrupt() override;
 
 private:
-	uint extraSamples() const override { return 224; }
-	bool wantSigned() const override { return true; }
-
 	class AmigaVoice : public MidiPlayer_AmigaMac1::Voice {
 	public:
 		AmigaVoice(MidiPlayer_Amiga1 &driver, uint id) : MidiPlayer_AmigaMac1::Voice(driver), _id(id), _amigaDriver(driver) {}
@@ -1197,17 +1195,17 @@ private:
 	private:
 		uint16 calcPeriod(int8 note, const NoteRange *noteRange, const Wave *wave, const uint32 *freqTable);
 
-		byte _id;
+		const byte _id;
 		MidiPlayer_Amiga1 &_amigaDriver;
 	};
 
 	bool _isSci1Ega;
 
-	static const byte velocityMapSci1Ega[64];
+	static const byte _velocityMapSci1Ega[64];
 };
 
 MidiPlayer_Amiga1::MidiPlayer_Amiga1(SciVersion version, Audio::Mixer *mixer) :
-	MidiPlayer_AmigaMac1(version, mixer),
+	MidiPlayer_AmigaMac1(version, mixer, 224, true),
 	Audio::Paula(true, mixer->getOutputRate(), (mixer->getOutputRate() + kBaseFreq / 2) / kBaseFreq),
 	_isSci1Ega(false) {}
 
@@ -1272,9 +1270,9 @@ void MidiPlayer_Amiga1::interrupt() {
 void MidiPlayer_Amiga1::AmigaVoice::play(int8 note, int8 velocity) {
 	if (velocity != 0) {
 		if (_amigaDriver._isSci1Ega)
-			velocity = velocityMapSci1Ega[velocity >> 1];
+			velocity = _velocityMapSci1Ega[velocity >> 1];
 		else
-			velocity = velocityMap[velocity >> 1];
+			velocity = _velocityMap[velocity >> 1];
 	}
 
 	_velocity = velocity;
@@ -1391,7 +1389,7 @@ bool MidiPlayer_Amiga1::AmigaVoice::calcVoiceStep() {
 	return true;
 }
 
-const byte MidiPlayer_Amiga1::velocityMapSci1Ega[64] = {
+const byte MidiPlayer_Amiga1::_velocityMapSci1Ega[64] = {
 	0x01, 0x04, 0x07, 0x0a, 0x0c, 0x0f, 0x11, 0x15, 0x18, 0x1a, 0x1c, 0x1e, 0x20, 0x21, 0x22, 0x23,
 	0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x30, 0x31, 0x31,
 	0x32, 0x32, 0x33, 0x33, 0x34, 0x34, 0x35, 0x35, 0x36, 0x36, 0x37, 0x37, 0x38, 0x38, 0x38, 0x39,
