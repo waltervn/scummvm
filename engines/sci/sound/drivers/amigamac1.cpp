@@ -24,12 +24,13 @@
 #include "sci/resource.h"
 
 #include "audio/audiostream.h"
-#include "audio/mods/paula.h"
 #include "audio/mixer.h"
+#include "audio/mods/paula.h"
+#include "common/array.h"
 #include "common/debug-channels.h"
-#include "common/file.h"
+#include "common/hashmap.h"
 #include "common/memstream.h"
-#include "common/system.h"
+#include "common/stream.h"
 #include "common/textconsole.h"
 #include "common/util.h"
 
@@ -64,7 +65,7 @@ static const byte velocityMapSci1Ega[64] = {
 	0x39, 0x39, 0x3a, 0x3a, 0x3a, 0x3b, 0x3b, 0x3b, 0x3c, 0x3d, 0x3e, 0x3e, 0x3f, 0x3f, 0x40, 0x40
 };
 
-class MidiDriver_AmigaMac_BASE : public MidiDriver {
+class MidiPlayer_AmigaMac_BASE : public MidiPlayer {
 public:
 	enum {
 		kVoices = 4,
@@ -79,27 +80,25 @@ public:
 		kEnvStateRelease
 	};
 
-	MidiDriver_AmigaMac_BASE(Audio::Mixer *mixer);
-	virtual ~MidiDriver_AmigaMac_BASE();
+	MidiPlayer_AmigaMac_BASE(SciVersion version, Audio::Mixer *mixer);
+	virtual ~MidiPlayer_AmigaMac_BASE();
 
-	// MidiDriver
-	bool isOpen() const override { return _isOpen; }
+	// MidiPlayer
 	void close() override;
 	void send(uint32 b) override;
 	void setTimerCallback(void *timer_param, Common::TimerManager::TimerProc timer_proc) override;
 	uint32 getBaseTempo() override { return (1000000 + kBaseFreq / 2) / kBaseFreq; }
-	uint32 property(int prop, uint32 param) override { return 0; }
-	MidiChannel *allocateChannel() override { return NULL; }
-	MidiChannel *getPercussionChannel() override { return NULL; }
-
-	// MidiPlayer
-	void setVolume(byte volume) { }
-	void playSwitch(bool play) { }
+	byte getPlayId() const override { return 0x06; }
+	int getPolyphony() const override { return kVoices; }
+	bool hasRhythmChannel() const override { return false; }
+	void setVolume(byte volume) override { _masterVolume = volume; }
+	int getVolume() override { return _masterVolume; }
+	void playSwitch(bool play) override { _playSwitch = play; }
 
 protected:
 	struct Wave {
 		Wave() : name(), phase1Start(0), phase1End(0), phase2Start(0), phase2End(0),
-				 nativeNote(0), freqTable(nullptr), samples(nullptr), size(0) { }
+				 nativeNote(0), freqTable(nullptr), samples(nullptr), size(0) {}
 
 		char name[9];
 		uint16 phase1Start, phase1End;
@@ -117,7 +116,7 @@ protected:
 	struct NoteRange {
 		NoteRange() : startNote(0), endNote(0), wave(nullptr), transpose(0), attackSpeed(0),
 					  attackTarget(0), decaySpeed(0), decayTarget(0), releaseSpeed(0), fixedNote(0),
-					  loop(false) { }
+					  loop(false) {}
 
 		int16 startNote;
 		int16 endNote;
@@ -137,7 +136,7 @@ protected:
 	};
 
 	struct Instrument {
-		Instrument() : name() { }
+		Instrument() : name() {}
 
 		char name[9];
 		Common::Array<NoteRange> noteRange;
@@ -169,7 +168,7 @@ protected:
 	class Channel;
 	class Voice {
 	public:
-		Voice(MidiDriver_AmigaMac_BASE &driver) :
+		Voice(MidiPlayer_AmigaMac_BASE &driver) :
 			_channel(nullptr),
 			_note(-1),
 			_velocity(0),
@@ -183,9 +182,9 @@ protected:
 			_noteRange(nullptr),
 			_wave(nullptr),
 			_freqTable(nullptr),
-			_driver(driver) { }
+			_driver(driver) {}
 
-		virtual ~Voice() { }
+		virtual ~Voice() {}
 
 		void noteOn(int8 note, int8 velocity);
 		void noteOff();
@@ -215,7 +214,7 @@ protected:
 		const uint32 *_freqTable;
 
 	private:
-		MidiDriver_AmigaMac_BASE &_driver;
+		MidiPlayer_AmigaMac_BASE &_driver;
 	};
 
 	Common::Array<Voice *> _voices;
@@ -223,14 +222,14 @@ protected:
 
 	class Channel {
 	public:
-		Channel(MidiDriver_AmigaMac_BASE &driver) :
+		Channel(MidiPlayer_AmigaMac_BASE &driver) :
 			_patch(0),
 			_pitch(0x2000),
 			_hold(false),
 			_volume(63),
 			_lastVoiceIt(driver._voices.begin()),
 			_extraVoices(0),
-			_driver(driver) { }
+			_driver(driver) {}
 
 		void noteOn(int8 note, int8 velocity);
 		void noteOff(int8 note);
@@ -251,27 +250,28 @@ protected:
 		byte _extraVoices;
 
 	private:
-		MidiDriver_AmigaMac_BASE &_driver;
+		MidiPlayer_AmigaMac_BASE &_driver;
 	};
 
 	Common::Array<Channel *> _channels;
 	typedef Common::Array<Channel *>::const_iterator ChanIt;
 };
 
-MidiDriver_AmigaMac_BASE::MidiDriver_AmigaMac_BASE(Audio::Mixer *mixer) :
+MidiPlayer_AmigaMac_BASE::MidiPlayer_AmigaMac_BASE(SciVersion version, Audio::Mixer *mixer) :
+	MidiPlayer(version),
 	_playSwitch(true),
 	_masterVolume(15),
 	_mixer(mixer),
 	_mixerSoundHandle(),
 	_timerProc(),
 	_timerParam(nullptr),
-	_isOpen(false) { }
+	_isOpen(false) {}
 
-MidiDriver_AmigaMac_BASE::~MidiDriver_AmigaMac_BASE() {
+MidiPlayer_AmigaMac_BASE::~MidiPlayer_AmigaMac_BASE() {
 	close();
 }
 
-void MidiDriver_AmigaMac_BASE::close() {
+void MidiPlayer_AmigaMac_BASE::close() {
 	if (!_isOpen)
 		return;
 
@@ -290,12 +290,12 @@ void MidiDriver_AmigaMac_BASE::close() {
 	_isOpen = false;
 }
 
-void MidiDriver_AmigaMac_BASE::setTimerCallback(void *timer_param, Common::TimerManager::TimerProc timer_proc) {
+void MidiPlayer_AmigaMac_BASE::setTimerCallback(void *timer_param, Common::TimerManager::TimerProc timer_proc) {
 	_timerProc = timer_proc;
 	_timerParam = timer_param;
 }
 
-const MidiDriver_AmigaMac_BASE::Wave *MidiDriver_AmigaMac_BASE::loadWave(Common::SeekableReadStream &stream, bool isEarlyPatch) {
+const MidiPlayer_AmigaMac_BASE::Wave *MidiPlayer_AmigaMac_BASE::loadWave(Common::SeekableReadStream &stream, bool isEarlyPatch) {
 	Wave *wave = new Wave();
 
 	stream.read(wave->name, 8);
@@ -314,7 +314,7 @@ const MidiDriver_AmigaMac_BASE::Wave *MidiDriver_AmigaMac_BASE::loadWave(Common:
 
 	// Sanity checks of segment offsets
 	if (wave->phase2End > wave->phase1End || wave->phase1Start > wave->phase1End || wave->phase2Start > wave->phase2End)
-		error("MidiDriver_AmigaMac_BASE: Invalid segment offsets found for wave '%s'", wave->name);
+		error("MidiPlayer_AmigaMac_BASE: Invalid segment offsets found for wave '%s'", wave->name);
 
 	// On Mac, 1480 additional samples are present, rounded up to the next word boundary
 	// This allows for a maximum step of 8 during sample generation without bounds checking
@@ -336,7 +336,7 @@ const MidiDriver_AmigaMac_BASE::Wave *MidiDriver_AmigaMac_BASE::loadWave(Common:
 			for (uint32 i = 0; i < wave->size; ++i)
 				samples[i] -= 0x80;
 		} else {
-			debugC(kDebugLevelSound, "MidiDriver_AmigaMac_BASE: Skipping sign conversion for wave '%s' of size %d bytes", wave->name, wave->size);
+			debugC(kDebugLevelSound, "MidiPlayer_AmigaMac_BASE: Skipping sign conversion for wave '%s' of size %d bytes", wave->name, wave->size);
 		}
 	}
 
@@ -358,7 +358,7 @@ const MidiDriver_AmigaMac_BASE::Wave *MidiDriver_AmigaMac_BASE::loadWave(Common:
 	return wave;
 }
 
-bool MidiDriver_AmigaMac_BASE::loadInstruments(Common::SeekableReadStream &patch, bool isEarlyPatch) {
+bool MidiPlayer_AmigaMac_BASE::loadInstruments(Common::SeekableReadStream &patch, bool isEarlyPatch) {
 	_instruments.resize(128);
 
 	int32 skip = (isEarlyPatch ? 4 : 0);
@@ -413,7 +413,7 @@ bool MidiDriver_AmigaMac_BASE::loadInstruments(Common::SeekableReadStream &patch
 				const Wave *wave = loadWave(patch, isEarlyPatch);
 
 				if (!wave) {
-					error("MidiDriver_AmigaMac_BASE: Failed to read instrument %d", patchIdx);
+					error("MidiPlayer_AmigaMac_BASE: Failed to read instrument %d", patchIdx);
 					delete instrument;
 					return false;
 				}
@@ -443,7 +443,7 @@ bool MidiDriver_AmigaMac_BASE::loadInstruments(Common::SeekableReadStream &patch
 	return true;
 }
 
-void MidiDriver_AmigaMac_BASE::freeInstruments() {
+void MidiPlayer_AmigaMac_BASE::freeInstruments() {
 	for (WaveMap::iterator it = _waves.begin(); it != _waves.end(); ++it)
 		delete it->_value;
 	_waves.clear();
@@ -457,7 +457,7 @@ void MidiDriver_AmigaMac_BASE::freeInstruments() {
 	_instruments.clear();
 }
 
-void MidiDriver_AmigaMac_BASE::onTimer() {
+void MidiPlayer_AmigaMac_BASE::onTimer() {
 	for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it) {
 		Voice *v = *it;
 		if (v->_note != -1) {
@@ -470,7 +470,7 @@ void MidiDriver_AmigaMac_BASE::onTimer() {
 	}
 }
 
-MidiDriver_AmigaMac_BASE::Voice *MidiDriver_AmigaMac_BASE::Channel::findVoice() {
+MidiPlayer_AmigaMac_BASE::Voice *MidiPlayer_AmigaMac_BASE::Channel::findVoice() {
 	assert(_lastVoiceIt != _driver._voices.end());
 
 	VoiceIt voiceIt = _lastVoiceIt;
@@ -514,7 +514,7 @@ MidiDriver_AmigaMac_BASE::Voice *MidiDriver_AmigaMac_BASE::Channel::findVoice() 
 	return nullptr;
 }
 
-void MidiDriver_AmigaMac_BASE::Channel::voiceMapping(byte voices) {
+void MidiPlayer_AmigaMac_BASE::Channel::voiceMapping(byte voices) {
 	int curVoices = 0;
 
 	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it)
@@ -531,7 +531,7 @@ void MidiDriver_AmigaMac_BASE::Channel::voiceMapping(byte voices) {
 	}
 }
 
-void MidiDriver_AmigaMac_BASE::Channel::assignVoices(byte voices) {
+void MidiPlayer_AmigaMac_BASE::Channel::assignVoices(byte voices) {
 	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it) {
 		Voice *v = *it;
 
@@ -549,7 +549,7 @@ void MidiDriver_AmigaMac_BASE::Channel::assignVoices(byte voices) {
 	_extraVoices += voices;
 }
 
-void MidiDriver_AmigaMac_BASE::Channel::releaseVoices(byte voices) {
+void MidiPlayer_AmigaMac_BASE::Channel::releaseVoices(byte voices) {
 	if (_extraVoices >= voices) {
 		_extraVoices -= voices;
 		return;
@@ -596,7 +596,7 @@ void MidiDriver_AmigaMac_BASE::Channel::releaseVoices(byte voices) {
 	} while (--voices > 0);
 }
 
-void MidiDriver_AmigaMac_BASE::donateVoices() {
+void MidiPlayer_AmigaMac_BASE::donateVoices() {
 	int freeVoices = 0;
 
 	for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it)
@@ -624,7 +624,7 @@ void MidiDriver_AmigaMac_BASE::donateVoices() {
 	}
 }
 
-void MidiDriver_AmigaMac_BASE::Voice::noteOn(int8 note, int8 velocity) {
+void MidiPlayer_AmigaMac_BASE::Voice::noteOn(int8 note, int8 velocity) {
 	_isReleased = false;
 	_envCurVel = 0;
 	_envState = kEnvStateAttack;
@@ -661,7 +661,7 @@ void MidiDriver_AmigaMac_BASE::Voice::noteOn(int8 note, int8 velocity) {
 	play(note, velocity);
 }
 
-void MidiDriver_AmigaMac_BASE::Voice::noteOff() {
+void MidiPlayer_AmigaMac_BASE::Voice::noteOff() {
 	stop();
 	_velocity = 0;
 	_note = -1;
@@ -673,7 +673,7 @@ void MidiDriver_AmigaMac_BASE::Voice::noteOff() {
 	_releaseTicks = 0;
 }
 
-void MidiDriver_AmigaMac_BASE::Voice::processEnvelope() {
+void MidiPlayer_AmigaMac_BASE::Voice::processEnvelope() {
 	const NoteRange *noteRange = _noteRange;
 	byte attackTarget = noteRange->attackTarget;
 	byte decayTarget = noteRange->decayTarget;
@@ -732,7 +732,7 @@ void MidiDriver_AmigaMac_BASE::Voice::processEnvelope() {
 	}
 }
 
-void MidiDriver_AmigaMac_BASE::Voice::calcMixVelocity() {
+void MidiPlayer_AmigaMac_BASE::Voice::calcMixVelocity() {
 	byte chanVol = _channel->_volume;
 	byte voiceVelocity = _velocity;
 
@@ -762,7 +762,7 @@ void MidiDriver_AmigaMac_BASE::Voice::calcMixVelocity() {
 	setVolume(voiceVelocity);
 }
 
-void MidiDriver_AmigaMac_BASE::Channel::noteOn(int8 note, int8 velocity) {
+void MidiPlayer_AmigaMac_BASE::Channel::noteOn(int8 note, int8 velocity) {
 	if (velocity == 0) {
 		noteOff(note);
 		return;
@@ -784,7 +784,7 @@ void MidiDriver_AmigaMac_BASE::Channel::noteOn(int8 note, int8 velocity) {
 		v->noteOn(note, velocity);
 }
 
-void MidiDriver_AmigaMac_BASE::Channel::noteOff(int8 note) {
+void MidiPlayer_AmigaMac_BASE::Channel::noteOff(int8 note) {
 	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it) {
 		Voice *v = *it;
 
@@ -800,11 +800,11 @@ void MidiDriver_AmigaMac_BASE::Channel::noteOff(int8 note) {
 	}
 }
 
-void MidiDriver_AmigaMac_BASE::Channel::changePatch(int8 patch) {
+void MidiPlayer_AmigaMac_BASE::Channel::changePatch(int8 patch) {
 	_patch = patch;
 }
 
-void MidiDriver_AmigaMac_BASE::Channel::holdPedal(int8 pedal) {
+void MidiPlayer_AmigaMac_BASE::Channel::holdPedal(int8 pedal) {
 	_hold = pedal;
 
 	if (pedal != 0)
@@ -820,7 +820,7 @@ void MidiDriver_AmigaMac_BASE::Channel::holdPedal(int8 pedal) {
 	}
 }
 
-void MidiDriver_AmigaMac_BASE::Channel::setPitchWheel(uint16 pitch) {
+void MidiPlayer_AmigaMac_BASE::Channel::setPitchWheel(uint16 pitch) {
 	_pitch = pitch;
 
 	for (VoiceIt it = _driver._voices.begin(); it != _driver._voices.end(); ++it) {
@@ -831,7 +831,7 @@ void MidiDriver_AmigaMac_BASE::Channel::setPitchWheel(uint16 pitch) {
 	}
 }
 
-void MidiDriver_AmigaMac_BASE::send(uint32 b) {
+void MidiPlayer_AmigaMac_BASE::send(uint32 b) {
 	byte command = b & 0xf0;
 	Channel *channel = _channels[b & 0xf];
 	byte op1 = (b >> 8) & 0xff;
@@ -890,16 +890,16 @@ static byte applyVelocity(byte velocity, byte sample) {
 	return euclDivide((sample - 0x80) * velocity, 63) + 0x80;
 }
 
-class MidiDriver_MacSci1 : public MidiDriver_AmigaMac_BASE, Audio::AudioStream {
+class MidiPlayer_MacSci1 : public MidiPlayer_AmigaMac_BASE, Audio::AudioStream {
 public:
 	enum {
 		kSampleChunkSize = 186
 	};
 
-	MidiDriver_MacSci1(Audio::Mixer *mixer);
+	MidiPlayer_MacSci1(SciVersion version, Audio::Mixer *mixer);
 
-	// MidiDriver
-	int open() override;
+	// MidiPlayer
+	int open(ResourceManager *resMan) override;
 
 	// AudioStream
 	bool isStereo() const override { return false; }
@@ -912,14 +912,14 @@ private:
 	uint extraSamples() const override { return 1480; }
 	bool wantSigned() const override { return false; }
 
-	class Voice : public MidiDriver_AmigaMac_BASE::Voice {
+	class Voice : public MidiPlayer_AmigaMac_BASE::Voice {
 	public:
-		Voice(MidiDriver_MacSci1 &driver) :
-			MidiDriver_AmigaMac_BASE::Voice(driver),
+		Voice(MidiPlayer_MacSci1 &driver) :
+			MidiPlayer_AmigaMac_BASE::Voice(driver),
 			_pos(0),
 			_step(0),
 			_mixVelocity(0),
-			_isOn(false) { }
+			_isOn(false) {}
 
 		ufrac_t _pos;
 		ufrac_t _step;
@@ -939,29 +939,29 @@ private:
 	ufrac_t _samplesPerTick;
 };
 
-MidiDriver_MacSci1::MidiDriver_MacSci1(Audio::Mixer *mixer) :
-	MidiDriver_AmigaMac_BASE(mixer),
+MidiPlayer_MacSci1::MidiPlayer_MacSci1(SciVersion version, Audio::Mixer *mixer) :
+	MidiPlayer_AmigaMac_BASE(version, mixer),
 	_nextTick(0),
-	_samplesPerTick(0) { }
+	_samplesPerTick(0) {}
 
-int MidiDriver_MacSci1::open() {
+int MidiPlayer_MacSci1::open(ResourceManager *resMan) {
 	if (_isOpen)
-		return MERR_ALREADY_OPEN;
+		return MidiDriver::MERR_ALREADY_OPEN;
 
-	const Resource *patch = g_sci->getResMan()->findResource(ResourceId(kResourceTypePatch, 7), false);
+	const Resource *patch = resMan->findResource(ResourceId(kResourceTypePatch, 7), false);
 	if (!patch) {
 		warning("Could not open patch for Mac SCI1 sound driver");
-		return MERR_DEVICE_NOT_AVAILABLE;
+		return MidiDriver::MERR_DEVICE_NOT_AVAILABLE;
 	}
 
 	Common::MemoryReadStream stream(patch->toStream());
 	if (!loadInstruments(stream, false)) {
 		freeInstruments();
-		return MERR_DEVICE_NOT_AVAILABLE;
+		return MidiDriver::MERR_DEVICE_NOT_AVAILABLE;
 	}
 
 	_voices.resize(kVoices);
-	for (Common::Array<MidiDriver_AmigaMac_BASE::Voice *>::iterator v = _voices.begin(); v != _voices.end(); ++v)
+	for (Common::Array<MidiPlayer_AmigaMac_BASE::Voice *>::iterator v = _voices.begin(); v != _voices.end(); ++v)
 		*v = new Voice(*this);
 
 	_channels.resize(MIDI_CHANNELS);
@@ -976,8 +976,8 @@ int MidiDriver_MacSci1::open() {
 	return 0;
 }
 
-void MidiDriver_MacSci1::generateSamples(int16 *data, int len) {
-	const byte *samples[kVoices] = { };
+void MidiPlayer_MacSci1::generateSamples(int16 *data, int len) {
+	const byte *samples[kVoices] = {};
 	const byte silence = 0x80;
 
 	ufrac_t offset[kVoices];
@@ -1049,7 +1049,7 @@ void MidiDriver_MacSci1::generateSamples(int16 *data, int len) {
 	}
 }
 
-int MidiDriver_MacSci1::readBuffer(int16 *data, const int numSamples) {
+int MidiPlayer_MacSci1::readBuffer(int16 *data, const int numSamples) {
 	const int stereoFactor = isStereo() ? 2 : 1;
 	int len = numSamples / stereoFactor;
 	int step;
@@ -1082,7 +1082,7 @@ int MidiDriver_MacSci1::readBuffer(int16 *data, const int numSamples) {
 	return numSamples;
 }
 
-void MidiDriver_MacSci1::Voice::play(int8 note, int8 velocity) {
+void MidiPlayer_MacSci1::Voice::play(int8 note, int8 velocity) {
 	_pos = uintToUfrac(_wave->phase1Start);
 
 	if (velocity != 0)
@@ -1099,15 +1099,15 @@ void MidiDriver_MacSci1::Voice::play(int8 note, int8 velocity) {
 	}
 }
 
-void MidiDriver_MacSci1::Voice::stop() {
+void MidiPlayer_MacSci1::Voice::stop() {
 	_isOn = false;
 }
 
-void MidiDriver_MacSci1::Voice::setVolume(byte volume) {
+void MidiPlayer_MacSci1::Voice::setVolume(byte volume) {
 	_mixVelocity = volume;
 }
 
-ufrac_t MidiDriver_MacSci1::Voice::calcStep(int8 note, const NoteRange *noteRange, const Wave *wave, const uint32 *freqTable) {
+ufrac_t MidiPlayer_MacSci1::Voice::calcStep(int8 note, const NoteRange *noteRange, const Wave *wave, const uint32 *freqTable) {
 	uint16 noteAdj = note + 127 - wave->nativeNote;
 	uint16 pitch = _channel->_pitch;
 	pitch /= 170;
@@ -1150,7 +1150,7 @@ ufrac_t MidiDriver_MacSci1::Voice::calcStep(int8 note, const NoteRange *noteRang
 	return step;
 }
 
-bool MidiDriver_MacSci1::Voice::calcVoiceStep() {
+bool MidiPlayer_MacSci1::Voice::calcVoiceStep() {
 	int8 note = _note;
 	const NoteRange *noteRange = _noteRange;
 	const Wave *wave = _wave;
@@ -1168,11 +1168,14 @@ bool MidiDriver_MacSci1::Voice::calcVoiceStep() {
 	return true;
 }
 
-class MidiDriver_AmigaSci1New : public MidiDriver_AmigaMac_BASE, public Audio::Paula {
+class MidiPlayer_AmigaSci1 : public MidiPlayer_AmigaMac_BASE, public Audio::Paula {
 public:
-	MidiDriver_AmigaSci1New(Audio::Mixer *mixer);
+	MidiPlayer_AmigaSci1(SciVersion version, Audio::Mixer *mixer);
 
-	int open() override;
+	// MidiPlayer
+	int open(ResourceManager *resMan) override;
+
+	// MidiDriver
 	void close() override;
 
 	// Paula
@@ -1182,9 +1185,9 @@ private:
 	uint extraSamples() const override { return 224; }
 	bool wantSigned() const override { return true; }
 
-	class Voice : public MidiDriver_AmigaMac_BASE::Voice {
+	class Voice : public MidiPlayer_AmigaMac_BASE::Voice {
 	public:
-		Voice(MidiDriver_AmigaSci1New &driver, uint id) : MidiDriver_AmigaMac_BASE::Voice(driver), _id(id), _amigaDriver(driver) { }
+		Voice(MidiPlayer_AmigaSci1 &driver, uint id) : MidiPlayer_AmigaMac_BASE::Voice(driver), _id(id), _amigaDriver(driver) {}
 
 		void play(int8 note, int8 velocity) override;
 		void stop() override;
@@ -1195,29 +1198,29 @@ private:
 		uint16 calcPeriod(int8 note, const NoteRange *noteRange, const Wave *wave, const uint32 *freqTable);
 
 		byte _id;
-		MidiDriver_AmigaSci1New &_amigaDriver;
+		MidiPlayer_AmigaSci1 &_amigaDriver;
 	};
 
 	bool _isSci1Ega;
 };
 
-MidiDriver_AmigaSci1New::MidiDriver_AmigaSci1New(Audio::Mixer *mixer) :
-	MidiDriver_AmigaMac_BASE(mixer),
+MidiPlayer_AmigaSci1::MidiPlayer_AmigaSci1(SciVersion version, Audio::Mixer *mixer) :
+	MidiPlayer_AmigaMac_BASE(version, mixer),
 	Audio::Paula(true, mixer->getOutputRate(), (mixer->getOutputRate() + kBaseFreq / 2) / kBaseFreq),
-	_isSci1Ega(false) { }
+	_isSci1Ega(false) {}
 
-int MidiDriver_AmigaSci1New::open() {
+int MidiPlayer_AmigaSci1::open(ResourceManager *resMan) {
 	if (_isOpen)
-		return MERR_ALREADY_OPEN;
+		return MidiDriver::MERR_ALREADY_OPEN;
 
-	const Resource *patch = g_sci->getResMan()->findResource(ResourceId(kResourceTypePatch, 9), false);
+	const Resource *patch = resMan->findResource(ResourceId(kResourceTypePatch, 9), false);
 
 	if (!patch) {
-		patch = g_sci->getResMan()->findResource(ResourceId(kResourceTypePatch, 5), false);
+		patch = resMan->findResource(ResourceId(kResourceTypePatch, 5), false);
 
 		if (!patch) {
 			warning("Could not open patch for Amiga SCI1 sound driver");
-			return MERR_DEVICE_NOT_AVAILABLE;
+			return MidiDriver::MERR_DEVICE_NOT_AVAILABLE;
 		}
 
 		_isSci1Ega = true;
@@ -1226,15 +1229,15 @@ int MidiDriver_AmigaSci1New::open() {
 	Common::MemoryReadStream stream(patch->toStream());
 	if (!loadInstruments(stream, _isSci1Ega)) {
 		freeInstruments();
-		return MERR_DEVICE_NOT_AVAILABLE;
+		return MidiDriver::MERR_DEVICE_NOT_AVAILABLE;
 	}
 
 	for (byte vi = 0; vi < kVoices; ++vi)
 		_voices.push_back(new Voice(*this, vi));
 
 	_channels.resize(MIDI_CHANNELS);
-	for (Common::Array<MidiDriver_AmigaMac_BASE::Channel *>::iterator ch = _channels.begin(); ch != _channels.end(); ++ch)
-		*ch = new MidiDriver_AmigaMac_BASE::Channel(*this);
+	for (Common::Array<MidiPlayer_AmigaMac_BASE::Channel *>::iterator ch = _channels.begin(); ch != _channels.end(); ++ch)
+		*ch = new MidiPlayer_AmigaMac_BASE::Channel(*this);
 
 	startPaula();
 	// Enable reverse stereo to counteract Audio::Paula's reverse stereo
@@ -1245,12 +1248,12 @@ int MidiDriver_AmigaSci1New::open() {
 	return 0;
 }
 
-void MidiDriver_AmigaSci1New::close() {
-	MidiDriver_AmigaMac_BASE::close();
+void MidiPlayer_AmigaSci1::close() {
+	MidiPlayer_AmigaMac_BASE::close();
 	stopPaula();
 }
 
-void MidiDriver_AmigaSci1New::interrupt() {
+void MidiPlayer_AmigaSci1::interrupt() {
 	// In the original driver, the interrupt handlers for each voice
 	// call voiceOff when non-looping samples are finished.
 	for (uint vi = 0; vi < kVoices; ++vi) {
@@ -1264,7 +1267,7 @@ void MidiDriver_AmigaSci1New::interrupt() {
 	onTimer();
 }
 
-void MidiDriver_AmigaSci1New::Voice::play(int8 note, int8 velocity) {
+void MidiPlayer_AmigaSci1::Voice::play(int8 note, int8 velocity) {
 	if (velocity != 0) {
 		if (_amigaDriver._isSci1Ega)
 			velocity = velocityMapSci1Ega[velocity >> 1];
@@ -1319,15 +1322,15 @@ void MidiDriver_AmigaSci1New::Voice::play(int8 note, int8 velocity) {
 	}
 }
 
-void MidiDriver_AmigaSci1New::Voice::stop() {
+void MidiPlayer_AmigaSci1::Voice::stop() {
 	_amigaDriver.clearVoice(_id);
 }
 
-void MidiDriver_AmigaSci1New::Voice::setVolume(byte volume) {
+void MidiPlayer_AmigaSci1::Voice::setVolume(byte volume) {
 	_amigaDriver.setChannelVolume(_id, volume);
 }
 
-uint16 MidiDriver_AmigaSci1New::Voice::calcPeriod(int8 note, const NoteRange *noteRange, const Wave *wave, const uint32 *freqTable) {
+uint16 MidiPlayer_AmigaSci1::Voice::calcPeriod(int8 note, const NoteRange *noteRange, const Wave *wave, const uint32 *freqTable) {
 	uint16 noteAdj = note + 127 - wave->nativeNote;
 	uint16 pitch = _channel->_pitch;
 	pitch /= 170;
@@ -1366,7 +1369,7 @@ uint16 MidiDriver_AmigaSci1New::Voice::calcPeriod(int8 note, const NoteRange *no
 	return period;
 }
 
-bool MidiDriver_AmigaSci1New::Voice::calcVoiceStep() {
+bool MidiPlayer_AmigaSci1::Voice::calcVoiceStep() {
 	int8 note = _note;
 	const NoteRange *noteRange = _noteRange;
 	const Wave *wave = _wave;
@@ -1386,28 +1389,11 @@ bool MidiDriver_AmigaSci1New::Voice::calcVoiceStep() {
 	return true;
 }
 
-class MidiPlayer_AmigaMac1 : public MidiPlayer {
-public:
-	MidiPlayer_AmigaMac1(SciVersion version, Common::Platform platform);
-	~MidiPlayer_AmigaMac1() { delete _driver; }
-
-	byte getPlayId() const override { return 0x06; }
-	int getPolyphony() const override { return MidiDriver_AmigaMac_BASE::kVoices; }
-	bool hasRhythmChannel() const override { return false; }
-	void setVolume(byte volume) override { static_cast<MidiDriver_AmigaMac_BASE *>(_driver)->setVolume(volume); }
-	void playSwitch(bool play) override { static_cast<MidiDriver_AmigaMac_BASE *>(_driver)->playSwitch(play); }
-};
-
-MidiPlayer_AmigaMac1::MidiPlayer_AmigaMac1(SciVersion version, Common::Platform platform) :
-		MidiPlayer(version) {
-	if (platform == Common::kPlatformMacintosh)
-		_driver = new MidiDriver_MacSci1(g_system->getMixer());
-	else
-		_driver = new MidiDriver_AmigaSci1New(g_system->getMixer());
-}
-
 MidiPlayer *MidiPlayer_AmigaMac1_create(SciVersion version, Common::Platform platform) {
-	return new MidiPlayer_AmigaMac1(version, platform);
+	if (platform == Common::kPlatformMacintosh)
+		return new MidiPlayer_MacSci1(version, g_system->getMixer());
+	else
+		return new MidiPlayer_AmigaSci1(version, g_system->getMixer());
 }
 
 } // End of namespace Sci
