@@ -344,10 +344,8 @@ const MidiPlayer_AmigaMac1::Wave *MidiPlayer_AmigaMac1::loadWave(Common::Seekabl
 bool MidiPlayer_AmigaMac1::loadInstruments(Common::SeekableReadStream &patch, bool isEarlyPatch) {
 	_instruments.resize(128);
 
-	int32 skip = (isEarlyPatch ? 4 : 0);
-
 	for (uint patchIdx = 0; patchIdx < 128; ++patchIdx) {
-		patch.seek(patchIdx * 4 + skip);
+		patch.seek(patchIdx * 4);
 		uint32 offset = patch.readUint32BE();
 
 		if (offset == 0)
@@ -355,7 +353,7 @@ bool MidiPlayer_AmigaMac1::loadInstruments(Common::SeekableReadStream &patch, bo
 
 		Instrument *instrument = new Instrument();
 
-		patch.seek(offset + skip);
+		patch.seek(offset);
 		patch.read(instrument->name, 8);
 		instrument->name[8] = 0;
 		patch.skip(2); // Unknown
@@ -392,7 +390,7 @@ bool MidiPlayer_AmigaMac1::loadInstruments(Common::SeekableReadStream &patch, bo
 			int32 nextNoteRangePos = patch.pos();
 
 			if (!_waves.contains(waveOffset)) {
-				patch.seek(waveOffset + skip);
+				patch.seek(waveOffset);
 				const Wave *wave = loadWave(patch, isEarlyPatch);
 
 				if (!wave) {
@@ -1212,7 +1210,8 @@ int MidiPlayer_Amiga1::open(ResourceManager *resMan) {
 		_isSci1Ega = true;
 	}
 
-	Common::MemoryReadStream stream(patch->toStream());
+	// SCI1 EGA patches start with a uint32 patch size, skip it
+	Common::MemoryReadStream stream(patch->toStream(_isSci1Ega ? 4 : 0));
 	if (!loadInstruments(stream, _isSci1Ega)) {
 		freeInstruments();
 		return MidiDriver::MERR_DEVICE_NOT_AVAILABLE;
