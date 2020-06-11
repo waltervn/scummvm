@@ -136,7 +136,7 @@ protected:
 	const Wave *loadWave(Common::SeekableReadStream &stream, bool isEarlyPatch);
 	bool loadInstruments(Common::SeekableReadStream &patch, bool isEarlyPatch);
 	void freeInstruments();
-	void donateVoices();
+	void distributeVoices();
 	void onTimer();
 
 	class Channel;
@@ -510,7 +510,7 @@ void MidiPlayer_AmigaMac1::Channel::voiceMapping(byte voices) {
 		assignVoices(voices - curVoices);
 	else if (curVoices > voices) {
 		releaseVoices(curVoices - voices);
-		_driver.donateVoices();
+		_driver.distributeVoices();
 	}
 }
 
@@ -579,7 +579,7 @@ void MidiPlayer_AmigaMac1::Channel::releaseVoices(byte voices) {
 	} while (--voices > 0);
 }
 
-void MidiPlayer_AmigaMac1::donateVoices() {
+void MidiPlayer_AmigaMac1::distributeVoices() {
 	int freeVoices = 0;
 
 	for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it)
@@ -599,7 +599,7 @@ void MidiPlayer_AmigaMac1::donateVoices() {
 				return;
 			} else {
 				freeVoices -= channel->_extraVoices;
-				byte extraVoices = channel->_extraVoices;
+				const byte extraVoices = channel->_extraVoices;
 				channel->_extraVoices = 0;
 				channel->assignVoices(extraVoices);
 			}
@@ -615,7 +615,7 @@ void MidiPlayer_AmigaMac1::Voice::noteOn(int8 note, int8 velocity) {
 	_ticks = 0;
 	_releaseTicks = 0;
 
-	int8 patchId = _channel->_patch;
+	const int8 patchId = _channel->_patch;
 
 	// Check for valid patch
 	if (patchId < 0 || (uint)patchId >= _driver._instruments.size() || !_driver._instruments[patchId])
@@ -657,12 +657,8 @@ void MidiPlayer_AmigaMac1::Voice::noteOff() {
 }
 
 void MidiPlayer_AmigaMac1::Voice::processEnvelope() {
-	const NoteRange *noteRange = _noteRange;
-	byte attackTarget = noteRange->attackTarget;
-	byte decayTarget = noteRange->decayTarget;
-
-	if (!noteRange->loop) {
-		_envCurVel = attackTarget;
+	if (!_noteRange->loop) {
+		_envCurVel = _noteRange->attackTarget;
 		return;
 	}
 
@@ -675,11 +671,10 @@ void MidiPlayer_AmigaMac1::Voice::processEnvelope() {
 			--_envCntDown;
 			return;
 		}
-		byte attackSpeed = noteRange->attackSpeed;
-		_envCntDown = _envSpeedToSkip[attackSpeed];
-		_envCurVel += _envSpeedToStep[attackSpeed];
-		if (_envCurVel >= attackTarget) {
-			_envCurVel = attackTarget;
+		_envCntDown = _envSpeedToSkip[_noteRange->attackSpeed];
+		_envCurVel += _envSpeedToStep[_noteRange->attackSpeed];
+		if (_envCurVel >= _noteRange->attackTarget) {
+			_envCurVel = _noteRange->attackTarget;
 			_envState = kEnvStateDecay;
 		}
 		break;
@@ -689,26 +684,24 @@ void MidiPlayer_AmigaMac1::Voice::processEnvelope() {
 			--_envCntDown;
 			return;
 		}
-		byte decaySpeed = noteRange->decaySpeed;
-		_envCntDown = _envSpeedToSkip[decaySpeed];
-		_envCurVel -= _envSpeedToStep[decaySpeed];
-		if (_envCurVel <= decayTarget) {
-			_envCurVel = decayTarget;
+		_envCntDown = _envSpeedToSkip[_noteRange->decaySpeed];
+		_envCurVel -= _envSpeedToStep[_noteRange->decaySpeed];
+		if (_envCurVel <= _noteRange->decayTarget) {
+			_envCurVel = _noteRange->decayTarget;
 			_envState = kEnvStateSustain;
 		}
 		break;
 	}
 	case kEnvStateSustain:
-		_envCurVel = decayTarget;
+		_envCurVel = _noteRange->decayTarget;
 		break;
 	case kEnvStateRelease: {
 		if (_envCntDown != 0) {
 			--_envCntDown;
 			return;
 		}
-		byte releaseSpeed = noteRange->releaseSpeed;
-		_envCntDown = _envSpeedToSkip[releaseSpeed];
-		_envCurVel -= _envSpeedToStep[releaseSpeed];
+		_envCntDown = _envSpeedToSkip[_noteRange->releaseSpeed];
+		_envCurVel -= _envSpeedToStep[_noteRange->releaseSpeed];
 		if (_envCurVel <= 0)
 			noteOff();
 	}
@@ -716,12 +709,11 @@ void MidiPlayer_AmigaMac1::Voice::processEnvelope() {
 }
 
 void MidiPlayer_AmigaMac1::Voice::calcMixVelocity() {
-	byte chanVol = _channel->_volume;
 	byte voiceVelocity = _velocity;
 
-	if (chanVol != 0) {
+	if (_channel->_volume != 0) {
 		if (voiceVelocity != 0) {
-			voiceVelocity = voiceVelocity * chanVol / 63;
+			voiceVelocity = voiceVelocity * _channel->_volume / 63;
 			if (_envCurVel != 0) {
 				voiceVelocity = voiceVelocity * _envCurVel / 63;
 				if (_driver._masterVolume != 0) {
@@ -815,9 +807,9 @@ void MidiPlayer_AmigaMac1::Channel::setPitchWheel(uint16 pitch) {
 }
 
 void MidiPlayer_AmigaMac1::send(uint32 b) {
-	byte command = b & 0xf0;
+	const byte command = b & 0xf0;
 	Channel *channel = _channels[b & 0xf];
-	byte op1 = (b >> 8) & 0xff;
+	const byte op1 = (b >> 8) & 0xff;
 	byte op2 = (b >> 16) & 0xff;
 
 	switch(command) {
@@ -921,7 +913,7 @@ private:
 		void setVolume(byte volume) override;
 		bool calcVoiceStep() override;
 
-		ufrac_t calcStep(int8 note, const NoteRange *noteRange, const Wave *wave, const uint32 *freqTable);
+		ufrac_t calcStep(int8 note);
 	};
 
 	ufrac_t _nextTick;
@@ -949,13 +941,11 @@ int MidiPlayer_Mac1::open(ResourceManager *resMan) {
 		return MidiDriver::MERR_DEVICE_NOT_AVAILABLE;
 	}
 
-	_voices.resize(kVoices);
-	for (Common::Array<MidiPlayer_AmigaMac1::Voice *>::iterator v = _voices.begin(); v != _voices.end(); ++v)
-		*v = new MacVoice(*this);
+	for (byte vi = 0; vi < kVoices; ++vi)
+		_voices.push_back(new MacVoice(*this));
 
-	_channels.resize(MIDI_CHANNELS);
-	for (Common::Array<Channel *>::iterator ch = _channels.begin(); ch != _channels.end(); ++ch)
-		*ch = new Channel(*this);
+	for (byte ci = 0; ci < MIDI_CHANNELS; ++ci)
+		_channels.push_back(new MidiPlayer_AmigaMac1::Channel(*this));
 
 	_samplesPerTick = uintToUfrac(getRate() / kBaseFreq) + uintToUfrac(getRate() % kBaseFreq) / kBaseFreq;
 	_mixer->playStream(Audio::Mixer::kPlainSoundType, &_mixerSoundHandle, this, -1, _mixer->kMaxChannelVolume, 0, DisposeAfterUse::NO);
@@ -999,8 +989,8 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 		for (int vi = 0; vi < kVoices; ++vi) {
 			MacVoice *v = static_cast<MacVoice *>(_voices[vi]);
 
-			uint16 curOffset = ufracToUint(offset[vi]);
-			byte sample = samples[vi][curOffset];
+			const uint16 curOffset = ufracToUint(offset[vi]);
+			const byte sample = samples[vi][curOffset];
 			mix += applyVelocity(v->_mixVelocity, sample);
 			offset[vi] += v->_step;
 		}
@@ -1096,12 +1086,11 @@ void MidiPlayer_Mac1::MacVoice::setVolume(byte volume) {
 	_mixVelocity = volume;
 }
 
-ufrac_t MidiPlayer_Mac1::MacVoice::calcStep(int8 note, const NoteRange *noteRange, const Wave *wave, const uint32 *freqTable) {
-	uint16 noteAdj = note + 127 - wave->nativeNote;
+ufrac_t MidiPlayer_Mac1::MacVoice::calcStep(int8 note) {
+	uint16 noteAdj = note + 127 - _wave->nativeNote;
 	uint16 pitch = _channel->_pitch;
 	pitch /= 170;
 	noteAdj += (pitch >> 2) - 12;
-	byte offset = pitch & 3;
 	uint octaveRsh = 0;
 
 	if (noteAdj < 255)
@@ -1109,20 +1098,20 @@ ufrac_t MidiPlayer_Mac1::MacVoice::calcStep(int8 note, const NoteRange *noteRang
 
 	noteAdj = (noteAdj + 9) % 12;
 
-	uint freqTableIndex = (noteAdj << 2) + offset;
+	uint freqTableIndex = (noteAdj << 2) + (pitch & 3);
 	assert(freqTableIndex + 8 < kFreqTableSize);
-	ufrac_t step = (ufrac_t)freqTable[freqTableIndex + 4];
+	ufrac_t step = (ufrac_t)_freqTable[freqTableIndex + 4];
 
-	int16 transpose = noteRange->transpose;
+	int16 transpose = _noteRange->transpose;
 	if (transpose > 0) {
-		ufrac_t delta = (ufrac_t)freqTable[freqTableIndex + 8] - step;
+		ufrac_t delta = (ufrac_t)_freqTable[freqTableIndex + 8] - step;
 		delta >>= 4;
 		delta >>= octaveRsh;
 		delta *= transpose;
 		step >>= octaveRsh;
 		step += delta;
 	} else if (transpose < 0) {
-		ufrac_t delta = step - (ufrac_t)freqTable[freqTableIndex];
+		ufrac_t delta = step - (ufrac_t)_freqTable[freqTableIndex];
 		delta >>= 4;
 		delta >>= octaveRsh;
 		delta *= -transpose;
@@ -1141,15 +1130,12 @@ ufrac_t MidiPlayer_Mac1::MacVoice::calcStep(int8 note, const NoteRange *noteRang
 
 bool MidiPlayer_Mac1::MacVoice::calcVoiceStep() {
 	int8 note = _note;
-	const NoteRange *noteRange = _noteRange;
-	const Wave *wave = _wave;
-	const uint32 *freqTable = _freqTable;
 
-	int16 fixedNote = noteRange->fixedNote;
+	int16 fixedNote = _noteRange->fixedNote;
 	if (fixedNote != -1)
 		note = fixedNote;
 
-	ufrac_t step = calcStep(note, noteRange, wave, freqTable);
+	ufrac_t step = calcStep(note);
 	if (step == (ufrac_t)-1)
 		return false;
 
@@ -1193,7 +1179,7 @@ private:
 		bool calcVoiceStep() override;
 
 	private:
-		uint16 calcPeriod(int8 note, const NoteRange *noteRange, const Wave *wave, const uint32 *freqTable);
+		uint16 calcPeriod(int8 note);
 
 		const byte _id;
 		MidiPlayer_Amiga1 &_amigaDriver;
@@ -1206,7 +1192,7 @@ private:
 
 MidiPlayer_Amiga1::MidiPlayer_Amiga1(SciVersion version, Audio::Mixer *mixer) :
 	MidiPlayer_AmigaMac1(version, mixer, 224, true),
-	Audio::Paula(true, mixer->getOutputRate(), (mixer->getOutputRate() + kBaseFreq / 2) / kBaseFreq),
+	Paula(true, mixer->getOutputRate(), (mixer->getOutputRate() + kBaseFreq / 2) / kBaseFreq, kFilterModeA500),
 	_isSci1Ega(false) {}
 
 int MidiPlayer_Amiga1::open(ResourceManager *resMan) {
@@ -1235,9 +1221,8 @@ int MidiPlayer_Amiga1::open(ResourceManager *resMan) {
 	for (byte vi = 0; vi < kVoices; ++vi)
 		_voices.push_back(new AmigaVoice(*this, vi));
 
-	_channels.resize(MIDI_CHANNELS);
-	for (Common::Array<MidiPlayer_AmigaMac1::Channel *>::iterator ch = _channels.begin(); ch != _channels.end(); ++ch)
-		*ch = new MidiPlayer_AmigaMac1::Channel(*this);
+	for (byte ci = 0; ci < MIDI_CHANNELS; ++ci)
+		_channels.push_back(new MidiPlayer_AmigaMac1::Channel(*this));
 
 	startPaula();
 	// Enable reverse stereo to counteract Audio::Paula's reverse stereo
@@ -1330,12 +1315,11 @@ void MidiPlayer_Amiga1::AmigaVoice::setVolume(byte volume) {
 	_amigaDriver.setChannelVolume(_id, volume);
 }
 
-uint16 MidiPlayer_Amiga1::AmigaVoice::calcPeriod(int8 note, const NoteRange *noteRange, const Wave *wave, const uint32 *freqTable) {
-	uint16 noteAdj = note + 127 - wave->nativeNote;
+uint16 MidiPlayer_Amiga1::AmigaVoice::calcPeriod(int8 note) {
+	uint16 noteAdj = note + 127 - _wave->nativeNote;
 	uint16 pitch = _channel->_pitch;
 	pitch /= 170;
 	noteAdj += (pitch >> 2) - 12;
-	byte offset = pitch & 3;
 
 	// SCI1 EGA is off by one note
 	if (_amigaDriver._isSci1Ega)
@@ -1344,18 +1328,18 @@ uint16 MidiPlayer_Amiga1::AmigaVoice::calcPeriod(int8 note, const NoteRange *not
 	uint octaveRsh = noteAdj / 12;
 	noteAdj %= 12;
 
-	uint freqTableIndex = (noteAdj << 2) + offset;
+	uint freqTableIndex = (noteAdj << 2) + (pitch & 3);
 	assert(freqTableIndex + 8 < kFreqTableSize);
-	uint32 period = freqTable[freqTableIndex + 4];
+	uint32 period = _freqTable[freqTableIndex + 4];
 
-	int16 transpose = noteRange->transpose;
+	int16 transpose = _noteRange->transpose;
 	if (transpose > 0) {
-		uint32 delta = period - freqTable[freqTableIndex + 8];
+		uint32 delta = period - _freqTable[freqTableIndex + 8];
 		delta >>= 4;
 		delta *= transpose;
 		period -= delta;
 	} else if (transpose < 0) {
-		uint32 delta = freqTable[freqTableIndex] - period;
+		uint32 delta = _freqTable[freqTableIndex] - period;
 		delta >>= 4;
 		delta *= -transpose;
 		period += delta;
@@ -1371,15 +1355,12 @@ uint16 MidiPlayer_Amiga1::AmigaVoice::calcPeriod(int8 note, const NoteRange *not
 
 bool MidiPlayer_Amiga1::AmigaVoice::calcVoiceStep() {
 	int8 note = _note;
-	const NoteRange *noteRange = _noteRange;
-	const Wave *wave = _wave;
-	const uint32 *freqTable = _freqTable;
 
-	int16 fixedNote = noteRange->fixedNote;
+	int16 fixedNote = _noteRange->fixedNote;
 	if (fixedNote != -1)
 		note = fixedNote;
 
-	uint16 period = calcPeriod(note, noteRange, wave, freqTable);
+	uint16 period = calcPeriod(note);
 	if (period == (uint16)-1)
 		return false;
 
