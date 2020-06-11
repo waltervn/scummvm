@@ -1096,7 +1096,7 @@ ufrac_t MidiPlayer_Mac1::MacVoice::calcStep(int8 note) {
 
 	noteAdj = (noteAdj + 9) % 12;
 
-	uint freqTableIndex = (noteAdj << 2) + (pitch & 3);
+	const uint freqTableIndex = (noteAdj << 2) + (pitch & 3);
 	assert(freqTableIndex + 8 < kFreqTableSize);
 	ufrac_t step = (ufrac_t)_freqTable[freqTableIndex + 4];
 
@@ -1324,10 +1324,10 @@ uint16 MidiPlayer_Amiga1::AmigaVoice::calcPeriod(int8 note) {
 	if (_amigaDriver._isSci1Ega)
 		++noteAdj;
 
-	uint octaveRsh = noteAdj / 12;
+	const uint octaveRsh = noteAdj / 12;
 	noteAdj %= 12;
 
-	uint freqTableIndex = (noteAdj << 2) + (pitch & 3);
+	const uint freqTableIndex = (noteAdj << 2) + (pitch & 3);
 	assert(freqTableIndex + 8 < kFreqTableSize);
 	uint32 period = _freqTable[freqTableIndex + 4];
 
