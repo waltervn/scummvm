@@ -33,13 +33,15 @@
 #include "common/stream.h"
 #include "common/textconsole.h"
 #include "common/util.h"
+#include "common/frac.h"
 
 namespace Sci {
 
 // Unsigned version of frac_t
 typedef uint32 ufrac_t;
-static inline ufrac_t uintToUfrac(uint16 value) { return value << 16; }
-static inline uint16 ufracToUint(ufrac_t value) { return value >> 16; }
+static inline ufrac_t uintToUfrac(uint16 value) { return value << FRAC_BITS; }
+static inline uint16 ufracToUint(ufrac_t value) { return value >> FRAC_BITS; }
+static inline ufrac_t doubleToUfrac(double value) { return (ufrac_t)(value * FRAC_ONE); }
 
 class MidiPlayer_AmigaMac1 : public MidiPlayer {
 public:
@@ -133,6 +135,7 @@ protected:
 	void *_timerParam;
 	bool _isOpen;
 
+	virtual uint32 *loadFreqTable(Common::SeekableReadStream &stream);
 	const Wave *loadWave(Common::SeekableReadStream &stream, bool isEarlyPatch);
 	bool loadInstruments(Common::SeekableReadStream &patch, bool isEarlyPatch);
 	void freeInstruments();
@@ -200,6 +203,7 @@ protected:
 			_patch(0),
 			_pitch(0x2000),
 			_hold(false),
+			_pan(64),
 			_volume(63),
 			_lastVoiceIt(driver._voices.begin()),
 			_extraVoices(0),
@@ -219,6 +223,7 @@ protected:
 		int8 _patch;
 		uint16 _pitch;
 		bool _hold;
+		int8 _pan;
 		int8 _volume;
 		VoiceIt _lastVoiceIt;
 		byte _extraVoices;
@@ -278,6 +283,15 @@ void MidiPlayer_AmigaMac1::setTimerCallback(void *timer_param, Common::TimerMana
 	_timerParam = timer_param;
 }
 
+uint32 *MidiPlayer_AmigaMac1::loadFreqTable(Common::SeekableReadStream &stream) {
+	uint32 *freqTable = new ufrac_t[kFreqTableSize];
+
+	for (uint i = 0; i < kFreqTableSize; ++i)
+		freqTable[i] = stream.readUint32BE();
+
+	return freqTable;
+}
+
 const MidiPlayer_AmigaMac1::Wave *MidiPlayer_AmigaMac1::loadWave(Common::SeekableReadStream &stream, bool isEarlyPatch) {
 	Wave *wave = new Wave();
 
@@ -324,17 +338,8 @@ const MidiPlayer_AmigaMac1::Wave *MidiPlayer_AmigaMac1::loadWave(Common::Seekabl
 	}
 
 	if (!_freqTables.contains(freqTableOffset)) {
-		uint32 *freqTable = new ufrac_t[kFreqTableSize];
-
 		stream.seek(freqTableOffset);
-
-		for (uint i = 0; i < kFreqTableSize; ++i)
-			freqTable[i] = stream.readUint32BE();
-
-		// Two more words follow each step table. The first word appears to be
-		// the sample rate. The 2nd one is possibly just for alignment.
-
-		_freqTables[freqTableOffset] = freqTable;
+		_freqTables[freqTableOffset] = loadFreqTable(stream);
 	}
 
 	wave->freqTable = _freqTables[freqTableOffset];
@@ -827,6 +832,9 @@ void MidiPlayer_AmigaMac1::send(uint32 b) {
 			}
 			channel->_volume = op2;
 			break;
+		case 0x0a:
+			channel->_pan = op2;
+			break;
 		case 0x40:
 			channel->holdPedal(op2);
 			break;
@@ -870,26 +878,32 @@ const byte MidiPlayer_AmigaMac1::_velocityMap[64] = {
 
 class MidiPlayer_Mac1 : public MidiPlayer_AmigaMac1, Audio::AudioStream {
 public:
-	enum {
-		kSampleChunkSize = 186
+	enum Mode {
+		kModeAuthentic,
+		kModeHq,
+		kModeHqStereo
 	};
 
-	MidiPlayer_Mac1(SciVersion version, Audio::Mixer *mixer);
+	MidiPlayer_Mac1(SciVersion version, Audio::Mixer *mixer, Mode mode);
 
 	// MidiPlayer
 	int open(ResourceManager *resMan) override;
 
 	// AudioStream
-	bool isStereo() const override { return false; }
-	int getRate() const override { return 11127; }
+	bool isStereo() const override { return _mode == kModeHqStereo; }
+	int getRate() const override { return (_mode == kModeAuthentic ? 11127 : _mixer->getOutputRate()); }
 	int readBuffer(int16 *data, const int numSamples) override;
 	bool endOfData() const override { return false; }
 
+	// MidiPlayer_AmigaMac1
+	uint32 *loadFreqTable(Common::SeekableReadStream &stream) override;
+
 private:
+	template <Mode mode>
 	void generateSamples(int16 *buf, int len);
 
 	static int euclDivide(int x, int y);
-	static byte applyVelocity(byte velocity, byte sample);
+	static int8 applyVelocity(byte velocity, byte sample);
 
 	class MacVoice : public MidiPlayer_AmigaMac1::Voice {
 	public:
@@ -898,11 +912,13 @@ private:
 			_pos(0),
 			_step(0),
 			_mixVelocity(0),
+			_mixPan(64),
 			_isOn(false) {}
 
 		ufrac_t _pos;
 		ufrac_t _step;
 		byte _mixVelocity;
+		int8 _mixPan;
 		bool _isOn;
 
 	private:
@@ -916,12 +932,15 @@ private:
 
 	ufrac_t _nextTick;
 	ufrac_t _samplesPerTick;
+
+	const Mode _mode;
 };
 
-MidiPlayer_Mac1::MidiPlayer_Mac1(SciVersion version, Audio::Mixer *mixer) :
+MidiPlayer_Mac1::MidiPlayer_Mac1(SciVersion version, Audio::Mixer *mixer, MidiPlayer_Mac1::Mode mode) :
 	MidiPlayer_AmigaMac1(version, mixer, 1480, false),
 	_nextTick(0),
-	_samplesPerTick(0) {}
+	_samplesPerTick(0),
+	_mode(mode) {}
 
 int MidiPlayer_Mac1::open(ResourceManager *resMan) {
 	if (_isOpen)
@@ -945,7 +964,7 @@ int MidiPlayer_Mac1::open(ResourceManager *resMan) {
 	for (byte ci = 0; ci < MIDI_CHANNELS; ++ci)
 		_channels.push_back(new MidiPlayer_AmigaMac1::Channel(*this));
 
-	_samplesPerTick = uintToUfrac(getRate() / kBaseFreq) + uintToUfrac(getRate() % kBaseFreq) / kBaseFreq;
+	_nextTick = _samplesPerTick = uintToUfrac(getRate() / kBaseFreq) + uintToUfrac(getRate() % kBaseFreq) / kBaseFreq;
 	_mixer->playStream(Audio::Mixer::kPlainSoundType, &_mixerSoundHandle, this, -1, _mixer->kMaxChannelVolume, 0, DisposeAfterUse::NO);
 
 	_isOpen = true;
@@ -953,29 +972,48 @@ int MidiPlayer_Mac1::open(ResourceManager *resMan) {
 	return 0;
 }
 
+uint32 *MidiPlayer_Mac1::loadFreqTable(Common::SeekableReadStream &stream) {
+	if (_mode == kModeAuthentic)
+		return MidiPlayer_AmigaMac1::loadFreqTable(stream);
+
+	uint32 *freqTable = new ufrac_t[kFreqTableSize];
+
+	stream.seek(kFreqTableSize << 2, SEEK_CUR);
+
+	const uint16 sampleRate = stream.readUint16BE();
+
+	for (int i = 0; i < kFreqTableSize; ++i)
+		freqTable[i] = doubleToUfrac((sampleRate << 10) * pow(2, (i - 20) / 48.) / getRate());
+
+	return freqTable;
+}
+
+template <MidiPlayer_Mac1::Mode mode>
 void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 	const byte *samples[kVoices] = {};
-	const byte silence = 0x80;
+	const byte silence[] = { 0x80, 0x80 };
 
 	ufrac_t offset[kVoices];
-
-	assert(len > 0 && len <= kSampleChunkSize);
+	int8 pan[kVoices];
+	uint16 endOffset[kVoices];
 
 	for (uint vi = 0; vi < kVoices; ++vi) {
 		MacVoice *v = static_cast<MacVoice *>(_voices[vi]);
 
 		if (v->_isOn) {
 			samples[vi] = v->_wave->samples;
+			pan[vi] = v->_mixPan;
 			offset[vi] = v->_pos;
 
-			// Sanity checks
-			assert(v->_step <= uintToUfrac(8));
-			const uint16 firstIndex = ufracToUint(v->_pos);
-			const uint16 lastIndex = ufracToUint(v->_pos + (len - 1) * v->_step);
-			assert(lastIndex >= firstIndex && lastIndex < v->_wave->size);
+			endOffset[vi] = v->_wave->phase2End;
+
+			if (endOffset[vi] == 0)
+				endOffset[vi] = v->_wave->phase1End;
 		} else {
-			samples[vi] = &silence;
+			samples[vi] = silence;
+			pan[vi] = 64;
 			offset[vi] = 0;
+			endOffset[vi] = 0;
 			v->_step = 0;
 		}
 	}
@@ -983,45 +1021,56 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 	// Mix
 
 	for (int i = 0; i < len; ++i) {
-		uint16 mix = 0;
+		int32 mixL = 0;
+		int32 mixR = 0;
+
 		for (int vi = 0; vi < kVoices; ++vi) {
 			MacVoice *v = static_cast<MacVoice *>(_voices[vi]);
 
 			const uint16 curOffset = ufracToUint(offset[vi]);
-			const byte sample = samples[vi][curOffset];
-			mix += applyVelocity(v->_mixVelocity, sample);
+
+			if (mode == kModeHq || mode == kModeHqStereo) {
+				int32 sample = (samples[vi][curOffset] - 0x80) << 8;
+				const int32 sample2 = (samples[vi][curOffset + 1] - 0x80) << 8;
+				sample += fracToInt((sample2 - sample) * (offset[vi] & FRAC_LO_MASK));
+				sample *= v->_mixVelocity;
+
+				if (mode == kModeHqStereo) {
+					mixL += sample * (127 - pan[vi]) / (63 * 64);
+					mixR += sample * pan[vi] / (63 * 64);
+				} else {
+					mixL += sample / 63;
+				}
+			} else {
+				mixL += applyVelocity(v->_mixVelocity, samples[vi][curOffset]) << 8;
+			}
+
 			offset[vi] += v->_step;
+
+			if (ufracToUint(offset[vi]) > endOffset[vi]) {
+				if (v->_wave->phase2End != 0 && v->_noteRange->loop) {
+					const uint16 loopSize = endOffset[vi] - v->_wave->phase2Start + 1;
+					do {
+						offset[vi] -= uintToUfrac(loopSize);
+					} while (ufracToUint(offset[vi]) > endOffset[vi]);
+				} else {
+					v->noteOff();
+					samples[vi] = silence;
+					offset[vi] = 0;
+					v->_step = 0;
+				}
+			}
 		}
 
-		mix = CLIP<uint16>(mix, 384, 639) - 384;
-
-		// Convert to 16-bit signed
-		data[i] = (mix << 8) - 0x8000;
+		*data++ = (int16)CLIP<int32>(mixL, -32768, 32767);
+		if (mode == kModeHqStereo)
+			*data++ = (int16)CLIP<int32>(mixR, -32768, 32767);
 	}
 
 	// Loop
 
 	for (uint vi = 0; vi < kVoices; ++vi) {
 		MacVoice *v = static_cast<MacVoice *>(_voices[vi]);
-
-		if (v->_isOn) {
-			uint16 endOffset = v->_wave->phase2End;
-
-			if (endOffset == 0)
-				endOffset = v->_wave->phase1End;
-
-			if (ufracToUint(offset[vi]) > endOffset) {
-				if (v->_wave->phase2End != 0 && v->_noteRange->loop) {
-					uint16 loopSize = endOffset - v->_wave->phase2Start + 1;
-					do {
-						offset[vi] -= uintToUfrac(loopSize);
-					} while (ufracToUint(offset[vi]) > endOffset);
-				} else {
-					v->noteOff();
-				}
-			}
-		}
-
 		v->_pos = offset[vi];
 	}
 }
@@ -1036,11 +1085,16 @@ int MidiPlayer_Mac1::readBuffer(int16 *data, const int numSamples) {
 		if (step > ufracToUint(_nextTick))
 			step = ufracToUint(_nextTick);
 
-		if (step > kSampleChunkSize)
-			step = kSampleChunkSize;
-
-		if (step > 0)
-			generateSamples(data, step);
+		switch (_mode) {
+		case kModeAuthentic:
+			generateSamples<kModeAuthentic>(data, step);
+			break;
+		case kModeHq:
+			generateSamples<kModeHq>(data, step);
+			break;
+		case kModeHqStereo:
+			generateSamples<kModeHqStereo>(data, step);
+		}
 
 		_nextTick -= uintToUfrac(step);
 		if (ufracToUint(_nextTick) == 0) {
@@ -1082,6 +1136,7 @@ void MidiPlayer_Mac1::MacVoice::stop() {
 
 void MidiPlayer_Mac1::MacVoice::setVolume(byte volume) {
 	_mixVelocity = volume;
+	_mixPan = _channel->_pan;
 }
 
 ufrac_t MidiPlayer_Mac1::MacVoice::calcStep(int8 note) {
@@ -1119,10 +1174,6 @@ ufrac_t MidiPlayer_Mac1::MacVoice::calcStep(int8 note) {
 		step >>= octaveRsh;
 	}
 
-	// This ensures that we won't step outside of the sample data
-	if (step > uintToUfrac(8))
-		return (ufrac_t)-1;
-
 	return step;
 }
 
@@ -1149,8 +1200,8 @@ int MidiPlayer_Mac1::euclDivide(int x, int y) {
 		return x / y;
 }
 
-byte MidiPlayer_Mac1::applyVelocity(byte velocity, byte sample) {
-	return euclDivide((sample - 0x80) * velocity, 63) + 0x80;
+int8 MidiPlayer_Mac1::applyVelocity(byte velocity, byte sample) {
+	return euclDivide((sample - 0x80) * velocity, 63);
 }
 
 class MidiPlayer_Amiga1 : public MidiPlayer_AmigaMac1, public Audio::Paula {
@@ -1378,7 +1429,7 @@ const byte MidiPlayer_Amiga1::_velocityMapSci1Ega[64] = {
 
 MidiPlayer *MidiPlayer_AmigaMac1_create(SciVersion version, Common::Platform platform) {
 	if (platform == Common::kPlatformMacintosh)
-		return new MidiPlayer_Mac1(version, g_system->getMixer());
+		return new MidiPlayer_Mac1(version, g_system->getMixer(), MidiPlayer_Mac1::kModeHqStereo);
 	else
 		return new MidiPlayer_Amiga1(version, g_system->getMixer());
 }
