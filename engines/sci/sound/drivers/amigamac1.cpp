@@ -40,6 +40,7 @@ namespace Sci {
 typedef uint32 ufrac_t;
 static inline ufrac_t uintToUfrac(uint16 value) { return value << 16; }
 static inline uint16 ufracToUint(ufrac_t value) { return value >> 16; }
+static inline ufrac_t doubleToUfrac(double value) { return (ufrac_t)(value * (1L << 16)); }
 
 class MidiPlayer_AmigaMac1 : public MidiPlayer {
 public:
@@ -133,6 +134,7 @@ protected:
 	void *_timerParam;
 	bool _isOpen;
 
+	virtual uint32 *loadFreqTable(Common::SeekableReadStream &stream);
 	const Wave *loadWave(Common::SeekableReadStream &stream, bool isEarlyPatch);
 	bool loadInstruments(Common::SeekableReadStream &patch, bool isEarlyPatch);
 	void freeInstruments();
@@ -200,6 +202,7 @@ protected:
 			_patch(0),
 			_pitch(0x2000),
 			_hold(false),
+			_pan(64),
 			_volume(63),
 			_lastVoiceIt(driver._voices.begin()),
 			_extraVoices(0),
@@ -219,6 +222,7 @@ protected:
 		int8 _patch;
 		uint16 _pitch;
 		bool _hold;
+		int8 _pan;
 		int8 _volume;
 		VoiceIt _lastVoiceIt;
 		byte _extraVoices;
@@ -278,6 +282,15 @@ void MidiPlayer_AmigaMac1::setTimerCallback(void *timer_param, Common::TimerMana
 	_timerParam = timer_param;
 }
 
+uint32 *MidiPlayer_AmigaMac1::loadFreqTable(Common::SeekableReadStream &stream) {
+	uint32 *freqTable = new ufrac_t[kFreqTableSize];
+
+	for (uint i = 0; i < kFreqTableSize; ++i)
+		freqTable[i] = stream.readUint32BE();
+
+	return freqTable;
+}
+
 const MidiPlayer_AmigaMac1::Wave *MidiPlayer_AmigaMac1::loadWave(Common::SeekableReadStream &stream, bool isEarlyPatch) {
 	Wave *wave = new Wave();
 
@@ -324,17 +337,8 @@ const MidiPlayer_AmigaMac1::Wave *MidiPlayer_AmigaMac1::loadWave(Common::Seekabl
 	}
 
 	if (!_freqTables.contains(freqTableOffset)) {
-		uint32 *freqTable = new ufrac_t[kFreqTableSize];
-
 		stream.seek(freqTableOffset);
-
-		for (uint i = 0; i < kFreqTableSize; ++i)
-			freqTable[i] = stream.readUint32BE();
-
-		// Two more words follow each step table. The first word appears to be
-		// the sample rate. The 2nd one is possibly just for alignment.
-
-		_freqTables[freqTableOffset] = freqTable;
+		_freqTables[freqTableOffset] = loadFreqTable(stream);
 	}
 
 	wave->freqTable = _freqTables[freqTableOffset];
@@ -827,6 +831,9 @@ void MidiPlayer_AmigaMac1::send(uint32 b) {
 			}
 			channel->_volume = op2;
 			break;
+		case 0x0a:
+			channel->_pan = op2;
+			break;
 		case 0x40:
 			channel->holdPedal(op2);
 			break;
@@ -871,7 +878,7 @@ const byte MidiPlayer_AmigaMac1::_velocityMap[64] = {
 class MidiPlayer_Mac1 : public MidiPlayer_AmigaMac1, Audio::AudioStream {
 public:
 	enum {
-		kSampleChunkSize = 186
+		kSampleChunkSize = 186 * 3
 	};
 
 	MidiPlayer_Mac1(SciVersion version, Audio::Mixer *mixer);
@@ -880,16 +887,16 @@ public:
 	int open(ResourceManager *resMan) override;
 
 	// AudioStream
-	bool isStereo() const override { return false; }
-	int getRate() const override { return 11127; }
+	bool isStereo() const override { return true; }
+	int getRate() const override { return _mixer->getOutputRate(); }
 	int readBuffer(int16 *data, const int numSamples) override;
 	bool endOfData() const override { return false; }
 
+	// MidiPlayer_AmigaMac1
+	uint32 *loadFreqTable(Common::SeekableReadStream &stream) override;
+
 private:
 	void generateSamples(int16 *buf, int len);
-
-	static int euclDivide(int x, int y);
-	static byte applyVelocity(byte velocity, byte sample);
 
 	class MacVoice : public MidiPlayer_AmigaMac1::Voice {
 	public:
@@ -953,11 +960,25 @@ int MidiPlayer_Mac1::open(ResourceManager *resMan) {
 	return 0;
 }
 
+uint32 *MidiPlayer_Mac1::loadFreqTable(Common::SeekableReadStream &stream) {
+	uint32 *freqTable = new ufrac_t[kFreqTableSize];
+
+	stream.seek(kFreqTableSize << 2, SEEK_CUR);
+
+	const uint16 sampleRate = stream.readUint16BE();
+
+	for (int i = 0; i < kFreqTableSize; ++i)
+		freqTable[i] = doubleToUfrac((sampleRate << 10) * pow(2, (i - 20) / 48.) / getRate());
+
+	return freqTable;
+}
+
 void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 	const byte *samples[kVoices] = {};
-	const byte silence = 0x80;
+	const byte silence[] = { 0x80, 0x80 };
 
 	ufrac_t offset[kVoices];
+	int8 pan[kVoices];
 
 	assert(len > 0 && len <= kSampleChunkSize);
 
@@ -966,6 +987,7 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 
 		if (v->_isOn) {
 			samples[vi] = v->_wave->samples;
+			pan[vi] = v->_channel->_pan;
 			offset[vi] = v->_pos;
 
 			// Sanity checks
@@ -974,7 +996,8 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 			const uint16 lastIndex = ufracToUint(v->_pos + (len - 1) * v->_step);
 			assert(lastIndex >= firstIndex && lastIndex < v->_wave->size);
 		} else {
-			samples[vi] = &silence;
+			samples[vi] = silence;
+			pan[vi] = 64;
 			offset[vi] = 0;
 			v->_step = 0;
 		}
@@ -983,20 +1006,23 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 	// Mix
 
 	for (int i = 0; i < len; ++i) {
-		uint16 mix = 0;
+		int32 mixL = 0;
+		int32 mixR = 0;
 		for (int vi = 0; vi < kVoices; ++vi) {
 			MacVoice *v = static_cast<MacVoice *>(_voices[vi]);
 
 			const uint16 curOffset = ufracToUint(offset[vi]);
-			const byte sample = samples[vi][curOffset];
-			mix += applyVelocity(v->_mixVelocity, sample);
+			const int8 s1 = samples[vi][curOffset] - 0x80;
+			const int8 s2 = samples[vi][curOffset + 1] - 0x80;
+			const int diff = (s2 - s1) << 8;
+			mixL += ((s1 << 8) + fracToInt(diff * (offset[vi] & FRAC_LO_MASK))) * v->_mixVelocity * (127 - pan[vi]) / (63 * 127);
+			mixR += ((s1 << 8) + fracToInt(diff * (offset[vi] & FRAC_LO_MASK))) * v->_mixVelocity * pan[vi] / (63 * 127);
+
 			offset[vi] += v->_step;
 		}
 
-		mix = CLIP<uint16>(mix, 384, 639) - 384;
-
-		// Convert to 16-bit signed
-		data[i] = (mix << 8) - 0x8000;
+		*data++ = (int16)CLIP<int32>(mixL, -32768, 32767);
+		*data++ = (int16)CLIP<int32>(mixR, -32768, 32767);
 	}
 
 	// Loop
@@ -1139,18 +1165,6 @@ bool MidiPlayer_Mac1::MacVoice::calcVoiceStep() {
 
 	_step = step;
 	return true;
-}
-
-int MidiPlayer_Mac1::euclDivide(int x, int y) {
-	// Assumes y > 0
-	if (x % y < 0)
-		return x / y - 1;
-	else
-		return x / y;
-}
-
-byte MidiPlayer_Mac1::applyVelocity(byte velocity, byte sample) {
-	return euclDivide((sample - 0x80) * velocity, 63) + 0x80;
 }
 
 class MidiPlayer_Amiga1 : public MidiPlayer_AmigaMac1, public Audio::Paula {
