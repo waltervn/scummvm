@@ -979,6 +979,7 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 
 	ufrac_t offset[kVoices];
 	int8 pan[kVoices];
+	uint16 endOffset[kVoices];
 
 	assert(len > 0 && len <= kSampleChunkSize);
 
@@ -990,15 +991,15 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 			pan[vi] = v->_channel->_pan;
 			offset[vi] = v->_pos;
 
-			// Sanity checks
-			assert(v->_step <= uintToUfrac(8));
-			const uint16 firstIndex = ufracToUint(v->_pos);
-			const uint16 lastIndex = ufracToUint(v->_pos + (len - 1) * v->_step);
-			assert(lastIndex >= firstIndex && lastIndex < v->_wave->size);
+			endOffset[vi] = v->_wave->phase2End;
+
+			if (endOffset[vi] == 0)
+				endOffset[vi] = v->_wave->phase1End;
 		} else {
 			samples[vi] = silence;
 			pan[vi] = 64;
 			offset[vi] = 0;
+			endOffset[vi] = 0;
 			v->_step = 0;
 		}
 	}
@@ -1019,6 +1020,20 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 			mixR += ((s1 << 8) + fracToInt(diff * (offset[vi] & FRAC_LO_MASK))) * v->_mixVelocity * pan[vi] / (63 * 127);
 
 			offset[vi] += v->_step;
+
+			if (ufracToUint(offset[vi]) > endOffset[vi]) {
+				if (v->_wave->phase2End != 0 && v->_noteRange->loop) {
+					uint16 loopSize = endOffset[vi] - v->_wave->phase2Start + 1;
+					do {
+						offset[vi] -= uintToUfrac(loopSize);
+					} while (ufracToUint(offset[vi]) > endOffset[vi]);
+				} else {
+					v->noteOff();
+					samples[vi] = silence;
+					offset[vi] = 0;
+					v->_step = 0;
+				}
+			}
 		}
 
 		*data++ = (int16)CLIP<int32>(mixL, -32768, 32767);
@@ -1029,25 +1044,6 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 
 	for (uint vi = 0; vi < kVoices; ++vi) {
 		MacVoice *v = static_cast<MacVoice *>(_voices[vi]);
-
-		if (v->_isOn) {
-			uint16 endOffset = v->_wave->phase2End;
-
-			if (endOffset == 0)
-				endOffset = v->_wave->phase1End;
-
-			if (ufracToUint(offset[vi]) > endOffset) {
-				if (v->_wave->phase2End != 0 && v->_noteRange->loop) {
-					uint16 loopSize = endOffset - v->_wave->phase2Start + 1;
-					do {
-						offset[vi] -= uintToUfrac(loopSize);
-					} while (ufracToUint(offset[vi]) > endOffset);
-				} else {
-					v->noteOff();
-				}
-			}
-		}
-
 		v->_pos = offset[vi];
 	}
 }
