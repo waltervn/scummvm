@@ -253,7 +253,10 @@ MidiPlayer_AmigaMac1::MidiPlayer_AmigaMac1(SciVersion version, Audio::Mixer *mix
 	_timerParam(nullptr),
 	_isOpen(false),
 	_extraSamples(extraSamples),
-	_wantSignedSamples(wantSignedSamples) {}
+	_wantSignedSamples(wantSignedSamples) {
+
+	assert(_extraSamples > 0);
+}
 
 MidiPlayer_AmigaMac1::~MidiPlayer_AmigaMac1() {
 	close();
@@ -993,8 +996,6 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 	const byte *samples[kVoices] = {};
 	const byte silence[] = { 0x80, 0x80 };
 
-	ufrac_t offset[kVoices];
-	int8 pan[kVoices];
 	uint16 endOffset[kVoices];
 
 	for (uint vi = 0; vi < kVoices; ++vi) {
@@ -1002,17 +1003,14 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 
 		if (v->_isOn) {
 			samples[vi] = v->_wave->samples;
-			pan[vi] = v->_mixPan;
-			offset[vi] = v->_pos;
-
 			endOffset[vi] = v->_wave->phase2End;
 
 			if (endOffset[vi] == 0)
 				endOffset[vi] = v->_wave->phase1End;
 		} else {
 			samples[vi] = silence;
-			pan[vi] = 64;
-			offset[vi] = 0;
+			v->_mixPan = 64;
+			v->_pos = 0;
 			endOffset[vi] = 0;
 			v->_step = 0;
 		}
@@ -1027,17 +1025,18 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 		for (int vi = 0; vi < kVoices; ++vi) {
 			MacVoice *v = static_cast<MacVoice *>(_voices[vi]);
 
-			const uint16 curOffset = ufracToUint(offset[vi]);
+			const uint16 curOffset = ufracToUint(v->_pos);
 
 			if (mode == kModeHq || mode == kModeHqStereo) {
 				int32 sample = (samples[vi][curOffset] - 0x80) << 8;
+				// Since _extraSamples > 0, we can safely access this sample
 				const int32 sample2 = (samples[vi][curOffset + 1] - 0x80) << 8;
-				sample += fracToInt((sample2 - sample) * (offset[vi] & FRAC_LO_MASK));
+				sample += fracToInt((sample2 - sample) * (v->_pos & FRAC_LO_MASK));
 				sample *= v->_mixVelocity;
 
 				if (mode == kModeHqStereo) {
-					mixL += sample * (127 - pan[vi]) / (63 * 64);
-					mixR += sample * pan[vi] / (63 * 64);
+					mixL += sample * (127 - v->_mixPan) / (63 * 64);
+					mixR += sample * v->_mixPan / (63 * 64);
 				} else {
 					mixL += sample / 63;
 				}
@@ -1045,18 +1044,18 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 				mixL += applyVelocity(v->_mixVelocity, samples[vi][curOffset]) << 8;
 			}
 
-			offset[vi] += v->_step;
+			v->_pos += v->_step;
 
-			if (ufracToUint(offset[vi]) > endOffset[vi]) {
+			if (ufracToUint(v->_pos) > endOffset[vi]) {
 				if (v->_wave->phase2End != 0 && v->_noteRange->loop) {
 					const uint16 loopSize = endOffset[vi] - v->_wave->phase2Start + 1;
 					do {
-						offset[vi] -= uintToUfrac(loopSize);
-					} while (ufracToUint(offset[vi]) > endOffset[vi]);
+						v->_pos -= uintToUfrac(loopSize);
+					} while (ufracToUint(v->_pos) > endOffset[vi]);
 				} else {
 					v->noteOff();
 					samples[vi] = silence;
-					offset[vi] = 0;
+					v->_pos = 0;
 					v->_step = 0;
 				}
 			}
@@ -1065,13 +1064,6 @@ void MidiPlayer_Mac1::generateSamples(int16 *data, int len) {
 		*data++ = (int16)CLIP<int32>(mixL, -32768, 32767);
 		if (mode == kModeHqStereo)
 			*data++ = (int16)CLIP<int32>(mixR, -32768, 32767);
-	}
-
-	// Loop
-
-	for (uint vi = 0; vi < kVoices; ++vi) {
-		MacVoice *v = static_cast<MacVoice *>(_voices[vi]);
-		v->_pos = offset[vi];
 	}
 }
 
