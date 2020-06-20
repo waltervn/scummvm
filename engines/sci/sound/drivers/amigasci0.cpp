@@ -141,24 +141,32 @@ public:
 
 private:
 	struct Instrument {
-		uint16 flags;
+		Instrument() : name(), loop(false), fixedNote(false), seg1Size(0),
+					   seg2Offset(0), seg2Size(0), seg3Offset(0), seg3Size(0),
+					   samples(nullptr), transpose(0), envelope() {}
+
+		~Instrument() { delete samples; }
+
+		char name[31];
+		bool loop;
+		bool fixedNote;
 		int16 seg1Size;
 		uint32 seg2Offset;
 		int16 seg2Size;
 		uint32 seg3Offset;
 		int16 seg3Size;
-		int8 *samples;
+		const byte *samples;
 		int8 transpose;
-		byte envelope[12];
-		byte name[31];
+
+		struct Envelope {
+			byte skip;
+			int8 step;
+			byte target;
+		} envelope[4];
 	};
 
-	struct {
-		char name[30];
-		uint16 instrumentCount;
-		Instrument *instrument[128];
-		uint16 patchNr[128];
-	} _bank;
+	Common::Array<const Instrument *> _instruments;
+	uint _defaultInstrument;
 
 	struct VoiceState {
 		const Instrument *instrument;
@@ -203,7 +211,9 @@ private:
 	int8 _chanVoice[MIDI_CHANNELS];
 	int8 _voiceNote[NUM_VOICES];
 
-	bool readInstruments();
+	bool loadInstruments(Common::SeekableReadStream &patch);
+	void freeInstruments();
+
 	void startVoice(int8 voice);
 	void stopVoice(int8 voice);
 	void setupVoice(int8 voice);
@@ -221,6 +231,7 @@ private:
 
 MidiDriver_AmigaSci0::MidiDriver_AmigaSci0(Audio::Mixer *mixer) :
 	Audio::Paula(true, mixer->getOutputRate(), mixer->getOutputRate() / 60),
+	_defaultInstrument(0),
 	_startVoice(0),
 	_mixer(mixer),
 	_timerProc(nullptr),
@@ -240,7 +251,6 @@ MidiDriver_AmigaSci0::MidiDriver_AmigaSci0(Audio::Mixer *mixer) :
 	memset(_chanVoice, 0, sizeof(_chanVoice));
 	memset(_voiceNote, 0, sizeof(_voiceNote));
 	memset(&_envelopeState, 0, sizeof(_envelopeState));
-	memset(&_bank, 0, sizeof(_bank));
 
 	switch (g_sci->getGameId()) {
 	case GID_HOYLE1:
@@ -256,18 +266,20 @@ MidiDriver_AmigaSci0::MidiDriver_AmigaSci0(Audio::Mixer *mixer) :
 }
 
 MidiDriver_AmigaSci0::~MidiDriver_AmigaSci0() {
-	for (uint i = 0; i < ARRAYSIZE(_bank.instrument); i++) {
-		if (_bank.instrument[i]) {
-			delete[] _bank.instrument[i]->samples;
-			delete _bank.instrument[i];
-		}
-	}
+	close();
 }
 
 int MidiDriver_AmigaSci0::open() {
-	if (!readInstruments()) {
-		warning("Could not read patch data from bank.001");
-		return Common::kUnknownError;
+	Common::File file;
+
+	if (!file.open("bank.001")) {
+		warning("MidiPlayer_Amiga0: Failed to open bank.001");
+		return false;
+	}
+
+	if (!loadInstruments(file)) {
+		freeInstruments();
+		return MidiDriver::MERR_DEVICE_NOT_AVAILABLE;
 	}
 
 	startPaula();
@@ -279,8 +291,14 @@ int MidiDriver_AmigaSci0::open() {
 }
 
 void MidiDriver_AmigaSci0::close() {
+	if (!_isOpen)
+		return;
+
 	_mixer->stopHandle(_mixerSoundHandle);
 	stopPaula();
+
+	freeInstruments();
+
 	_isOpen = false;
 }
 
@@ -403,7 +421,7 @@ void MidiDriver_AmigaSci0::setupVoice(int8 voice) {
 	const Instrument *ins = _voiceState[voice].instrument;
 
 	_voice[voice].loop = _voiceState[voice].loop;
-	_voice[voice].seg1 = _voice[voice].seg2 = ins->samples;
+	_voice[voice].seg1 = _voice[voice].seg2 = (const int8 *)ins->samples;
 	_voice[voice].seg1Size = ins->seg1Size; 
 	_voice[voice].seg2 += ins->seg2Offset & 0xfffe;
 	_voice[voice].seg1Size = ins->seg1Size; 
@@ -418,19 +436,19 @@ void MidiDriver_AmigaSci0::setupVoice(int8 voice) {
 	_voice[voice].period = _voiceState[voice].period;
 	_voice[voice].volume = _voiceState[voice].velocity >> 1;
 	_envelopeState.state[voice] = 0;
-	_envelopeState.length[0][voice] = ins->envelope[0];
+	_envelopeState.length[0][voice] = ins->envelope[0].skip;
 	if (_envelopeState.length[0][voice] != 0 && _voiceState[voice].loop) {
-		_envelopeState.length[1][voice] = ins->envelope[1];
-		_envelopeState.length[2][voice] = ins->envelope[2];
-		_envelopeState.length[3][voice] = ins->envelope[3];
-		_envelopeState.delta[0][voice] = ins->envelope[4];
-		_envelopeState.delta[1][voice] = ins->envelope[5];
-		_envelopeState.delta[2][voice] = ins->envelope[6];
-		_envelopeState.delta[3][voice] = ins->envelope[7];
+		_envelopeState.length[1][voice] = ins->envelope[1].skip;
+		_envelopeState.length[2][voice] = ins->envelope[2].skip;
+		_envelopeState.length[3][voice] = ins->envelope[3].skip;
+		_envelopeState.delta[0][voice] = ins->envelope[0].step;
+		_envelopeState.delta[1][voice] = ins->envelope[1].step;
+		_envelopeState.delta[2][voice] = ins->envelope[2].step;
+		_envelopeState.delta[3][voice] = ins->envelope[3].step;
 		_envelopeState.velocity[0][voice] = _voice[voice].volume;
-		_envelopeState.velocity[1][voice] = ins->envelope[8];
-		_envelopeState.velocity[2][voice] = ins->envelope[9];
-		_envelopeState.velocity[3][voice] = ins->envelope[10];
+		_envelopeState.velocity[1][voice] = ins->envelope[0].target;
+		_envelopeState.velocity[2][voice] = ins->envelope[1].target;
+		_envelopeState.velocity[3][voice] = ins->envelope[2].target;
 		_envelopeState.countDown[voice] = 0;
 		_envelopeState.state[voice] = 1;
 	}
@@ -458,24 +476,24 @@ void MidiDriver_AmigaSci0::stopVoices() {
 }
 
 bool MidiDriver_AmigaSci0::voiceOn(int8 voice, int8 note, bool newNote) {
-	_voiceState[voice].instrument = _bank.instrument[_voicePatch[voice]];
+	_voiceState[voice].instrument = _instruments[_voicePatch[voice]];
 
 	// Default to the first instrument in the bank
 	if (!_voiceState[voice].instrument)
-		_voiceState[voice].instrument = _bank.instrument[_bank.patchNr[0]];
+		_voiceState[voice].instrument = _instruments[_defaultInstrument];
 
 	_voiceState[voice].velocity = _voiceVelocity[voice];
 	_voiceVolume[voice] = _voiceVelocity[voice] >> 1;
 
 	if (newNote) {
-		if (_voiceState[voice].instrument->flags & MODE_LOOPING)
+		if (_voiceState[voice].instrument->loop)
 			_voiceState[voice].loop = 3;
 		else
 			_voiceState[voice].loop = 0;
 	}
 
 	// In the original the test here is flags <= 1
-	if (!(_voiceState[voice].instrument->flags & MODE_PITCH_CHANGES))
+	if (_voiceState[voice].instrument->fixedNote)
 		note = 101;
 
 	int16 index = (note + _voiceState[voice].instrument->transpose) * 4;
@@ -581,41 +599,87 @@ void MidiDriver_AmigaSci0::setVolume(byte volume) {
 	_masterVolume = volume << 2;
 }
 
-bool MidiDriver_AmigaSci0::readInstruments() {
-	Common::File file;
+bool MidiDriver_AmigaSci0::loadInstruments(Common::SeekableReadStream &patch) {
+	char name[31];
 
-	if (!file.open("bank.001"))
+	if (patch.read(name, 8) < 8 || strncmp(name, "X0iUo123", 8) != 0) {
+		warning("MidiDriver_AmigaSci0: Incorrect ID string in patch bank");
 		return false;
+	}
 
-	file.read(_bank.name, 8);
-	if (strcmp(_bank.name, "X0iUo123") != 0)
+	if (patch.read(name, 30) < 30) {
+		warning("MidiDriver_AmigaSci0: Error reading patch bank");
 		return false;
+	}
+	name[30] = 0;
 
-	file.read(_bank.name, 30);
-	_bank.instrumentCount = file.readUint16BE();
+	debugC(kDebugLevelSound, "Bank: '%s'", name);
 
-	for (uint i = 0; i < _bank.instrumentCount; ++i) {
-		Instrument *ins = new Instrument();
-		_bank.patchNr[i] = file.readUint16BE();
-		_bank.instrument[_bank.patchNr[i]] = ins;
+	_instruments.resize(128);
 
-		file.read(ins->name, 30);
-		ins->flags = file.readUint16BE();
-		ins->transpose = file.readByte();
-		ins->seg1Size = file.readSint16BE();
-		ins->seg2Offset = file.readUint32BE();
-		ins->seg2Size = file.readSint16BE();
-		ins->seg3Offset = file.readUint32BE();
-		ins->seg3Size = file.readSint16BE();
-		file.read(ins->envelope, 12);
+	const uint16 instrumentCount = patch.readUint16BE();
 
-		int32 sampleSize = ins->seg1Size + ins->seg2Size + ins->seg3Size;
+	if (instrumentCount == 0) {
+		warning("MidiDriver_AmigaSci0: No instruments found in patch bank");
+		return false;
+	}
+
+	for (uint i = 0; i < instrumentCount; ++i) {
+		Instrument *instrument = new Instrument();
+
+		const uint16 patchIdx = patch.readUint16BE();
+		_instruments[patchIdx] = instrument;
+
+		if (i == 0)
+			_defaultInstrument = patchIdx;
+
+		patch.read(instrument->name, 30);
+		instrument->name[30] = 0;
+		const uint16 flags = patch.readUint16BE();
+		instrument->loop = flags & 1;
+		instrument->fixedNote = !(flags & 2);
+		instrument->transpose = patch.readByte();
+		instrument->seg1Size = patch.readSint16BE();
+		instrument->seg2Offset = patch.readUint32BE();
+		instrument->seg2Size = patch.readSint16BE();
+		instrument->seg3Offset = patch.readUint32BE();
+		instrument->seg3Size = patch.readSint16BE();
+
+		for (uint env = 0; env < ARRAYSIZE(instrument->envelope); ++env)
+			instrument->envelope[env].skip = patch.readByte();
+
+		for (uint env = 0; env < ARRAYSIZE(instrument->envelope); ++env)
+			instrument->envelope[env].step = patch.readByte();
+
+		for (uint env = 0; env < ARRAYSIZE(instrument->envelope); ++env)
+			instrument->envelope[env].target = patch.readByte();
+
+		int32 sampleSize = instrument->seg1Size + instrument->seg2Size + instrument->seg3Size;
 		sampleSize <<= 1;
-		ins->samples = new int8[sampleSize];
-		file.read(ins->samples, sampleSize);
+		byte *samples = new byte[sampleSize];
+		patch.read(samples, sampleSize);
+		instrument->samples = samples;
+
+		if (patch.eos() || patch.err()) {
+			warning("MidiDriver_AmigaSci0: Error reading patch bank");
+			return false;
+		}
+
+		debugC(kDebugLevelSound, "\tInstrument[%d]: '%s'", patchIdx, instrument->name);
+		debugC(kDebugLevelSound, "\t\tSegment 1: offset 0, size %d", instrument->seg1Size * 2);
+		debugC(kDebugLevelSound, "\t\tSegment 2: offset %d, size %d", instrument->seg2Offset, instrument->seg2Size * 2);
+		debugC(kDebugLevelSound, "\t\tSegment 3: offset %d, size %d", instrument->seg3Offset, instrument->seg3Size * 2);
+		debugC(kDebugLevelSound, "\t\tTranspose = %d, Fixed note = %d, Loop = %d", instrument->transpose, instrument->fixedNote, instrument->loop);
 	}
 
 	return true;
+}
+
+void MidiDriver_AmigaSci0::freeInstruments() {
+	for (Common::Array<const Instrument *>::iterator it = _instruments.begin(); it != _instruments.end(); ++it)
+		delete *it;
+
+	_instruments.clear();
 }
 
 class MidiPlayer_AmigaSci0 : public MidiPlayer {
