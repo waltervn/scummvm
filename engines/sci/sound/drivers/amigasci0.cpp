@@ -172,14 +172,13 @@ private:
 		const Instrument *instrument;
 		uint16 period;
 		byte velocity;
-		byte loop;
+		bool loop;
 	};
 
 	struct Voice {
-		byte loop;
 		const int8 *seg1, *seg2;
 		int16 seg1Size, seg2Size;
-		uint16 period, volume;
+		uint16 volume;
 	};
 
 	struct {
@@ -190,7 +189,6 @@ private:
 		int8 delta[4][NUM_VOICES];
 	} _envelopeState;
 
-	byte _startVoice;
 	Audio::Mixer *_mixer;
 	Audio::SoundHandle _mixerSoundHandle;
 	Common::TimerManager::TimerProc _timerProc;
@@ -204,7 +202,6 @@ private:
 	VoiceState _voiceState[NUM_VOICES];
 	Voice _voice[NUM_VOICES];
 	byte _voicePatch[NUM_VOICES];
-	byte _voiceVelocity[NUM_VOICES]; // MIDI velocity 0-127
 	byte _voiceVolume[NUM_VOICES]; // Amiga volume 0-63
 	int8 _voicePitchWheelSign[NUM_VOICES];
 	byte _voicePitchWheelOffset[NUM_VOICES];
@@ -217,22 +214,18 @@ private:
 	void startVoice(int8 voice);
 	void stopVoice(int8 voice);
 	void setupVoice(int8 voice);
-	void startVoices();
 	void stopVoices();
 	void doEnvelopes();
 	void noteOn(int8 voice, int8 note, int8 velocity);
 	void noteOff(int8 voice, int8 note);
-	bool voiceOn(int8 voice, int8 note, bool newNote);
+	bool voiceOn(int8 voice, int8 note, int8 velocity, bool newNote);
 	void pitchWheel(int8 voice, int16 pitch);
 };
 
-#define MODE_LOOPING (1 << 0)
-#define MODE_PITCH_CHANGES (1 << 1)
 
 MidiDriver_AmigaSci0::MidiDriver_AmigaSci0(Audio::Mixer *mixer) :
 	Audio::Paula(true, mixer->getOutputRate(), mixer->getOutputRate() / 60),
 	_defaultInstrument(0),
-	_startVoice(0),
 	_mixer(mixer),
 	_timerProc(nullptr),
 	_timerParam(nullptr),
@@ -244,7 +237,6 @@ MidiDriver_AmigaSci0::MidiDriver_AmigaSci0(Audio::Mixer *mixer) :
 	memset(_voiceState, 0, sizeof(_voiceState));
 	memset(_voice, 0, sizeof(_voice));
 	memset(_voicePatch, 0, sizeof(_voicePatch));
-	memset(_voiceVelocity, 0, sizeof(_voiceVelocity));
 	memset(_voiceVolume, 0, sizeof(_voiceVolume));
 	memset(_voicePitchWheelSign, 0, sizeof(_voicePitchWheelSign));
 	memset(_voicePitchWheelOffset, 0, sizeof(_voicePitchWheelOffset));
@@ -329,7 +321,6 @@ void MidiDriver_AmigaSci0::initTrack(SciSpan<const byte>& header) {
 	_chanVoice[15] = -1;
 
 	for (uint i = 0; i < NUM_VOICES; ++i) {
-		_voiceVelocity[i] = 0;
 		_voiceNote[i] = -1;
 		_voicePitchWheelSign[i] = 0;
 		_voicePitchWheelOffset[i] = 0;
@@ -345,7 +336,6 @@ void MidiDriver_AmigaSci0::interrupt() {
 	if (_timerProc)
 		(*_timerProc)(_timerParam);
 
-	startVoices();
 	doEnvelopes();
 }
 
@@ -409,7 +399,7 @@ void MidiDriver_AmigaSci0::startVoice(int8 voice) {
 	setChannelData(voice, _voice[voice].seg1, _voice[voice].seg2, _voice[voice].seg1Size * 2, _voice[voice].seg2Size * 2);
 	if (_playSwitch)
 		setChannelVolume(voice, _masterVolume * _voice[voice].volume >> 6);
-	setChannelPeriod(voice, _voice[voice].period);
+	setChannelPeriod(voice, _voiceState[voice].period);
 }
 
 void MidiDriver_AmigaSci0::stopVoice(int8 voice) {
@@ -420,20 +410,18 @@ void MidiDriver_AmigaSci0::setupVoice(int8 voice) {
 	// NOTE: PCJr mode not implemented
 	const Instrument *ins = _voiceState[voice].instrument;
 
-	_voice[voice].loop = _voiceState[voice].loop;
 	_voice[voice].seg1 = _voice[voice].seg2 = (const int8 *)ins->samples;
 	_voice[voice].seg1Size = ins->seg1Size; 
 	_voice[voice].seg2 += ins->seg2Offset & 0xfffe;
 	_voice[voice].seg1Size = ins->seg1Size; 
 	_voice[voice].seg2Size = ins->seg2Size;
 
-	if (_voiceState[voice].loop == 0) {
+	if (!_voiceState[voice].loop) {
 		_voice[voice].seg1Size = _voice[voice].seg1Size + _voice[voice].seg2Size + ins->seg3Size;
 		_voice[voice].seg2 = silence;
 		_voice[voice].seg2Size = 1;
 	}
 
-	_voice[voice].period = _voiceState[voice].period;
 	_voice[voice].volume = _voiceState[voice].velocity >> 1;
 	_envelopeState.state[voice] = 0;
 	_envelopeState.length[0][voice] = ins->envelope[0].skip;
@@ -454,16 +442,6 @@ void MidiDriver_AmigaSci0::setupVoice(int8 voice) {
 	}
 }
 
-void MidiDriver_AmigaSci0::startVoices() {
-	for (uint i = 0; i < NUM_VOICES; ++i)
-		if (_startVoice & (1 << i)) {
-			setupVoice(i);
-			startVoice(i);
-		}
-
-	_startVoice = 0;
-}
-
 void MidiDriver_AmigaSci0::stopVoices() {
 	// FIXME: Why is master volume temporarily set to 0 here?
 	byte masterVolume = _masterVolume;
@@ -475,24 +453,19 @@ void MidiDriver_AmigaSci0::stopVoices() {
 	_masterVolume = masterVolume;
 }
 
-bool MidiDriver_AmigaSci0::voiceOn(int8 voice, int8 note, bool newNote) {
+bool MidiDriver_AmigaSci0::voiceOn(int8 voice, int8 note, int8 velocity, bool newNote) {
 	_voiceState[voice].instrument = _instruments[_voicePatch[voice]];
 
 	// Default to the first instrument in the bank
 	if (!_voiceState[voice].instrument)
 		_voiceState[voice].instrument = _instruments[_defaultInstrument];
 
-	_voiceState[voice].velocity = _voiceVelocity[voice];
-	_voiceVolume[voice] = _voiceVelocity[voice] >> 1;
+	_voiceState[voice].velocity = velocity;
+	_voiceVolume[voice] = velocity >> 1;
 
-	if (newNote) {
-		if (_voiceState[voice].instrument->loop)
-			_voiceState[voice].loop = 3;
-		else
-			_voiceState[voice].loop = 0;
-	}
+	if (newNote)
+		_voiceState[voice].loop = _voiceState[voice].instrument->loop;
 
-	// In the original the test here is flags <= 1
 	if (_voiceState[voice].instrument->fixedNote)
 		note = 101;
 
@@ -516,16 +489,15 @@ bool MidiDriver_AmigaSci0::voiceOn(int8 voice, int8 note, bool newNote) {
 }
 
 void MidiDriver_AmigaSci0::noteOn(int8 voice, int8 note, int8 velocity) {
-	_voiceVelocity[voice] = velocity;
-
 	if (velocity == 0) {
 		noteOff(voice, note);
 		return;
 	}
 
-	if (voiceOn(voice, note, true)) {
-		_startVoice |= (1 << voice);
+	if (voiceOn(voice, note, velocity, true)) {
 		stopVoice(voice);
+		setupVoice(voice);
+		startVoice(voice);
 	}
 }
 
@@ -553,9 +525,8 @@ void MidiDriver_AmigaSci0::pitchWheel(int8 voice, int16 pitch) {
 	}
 
 	if (_voiceNote[voice] != -1) {
-		voiceOn(voice, _voiceNote[voice], false);
-		_voice[voice].period = _voiceState[voice].period;
-		setChannelPeriod(voice, _voice[voice].period);
+		voiceOn(voice, _voiceNote[voice], _voiceState[voice].velocity, false);
+		setChannelPeriod(voice, _voiceState[voice].period);
 	}
 }
 
