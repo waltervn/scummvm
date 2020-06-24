@@ -335,7 +335,7 @@ void MidiDriver_AmigaSci0::interrupt() {
 
 void MidiDriver_AmigaSci0::doEnvelopes() {
 	for (uint voice = 0; voice < NUM_VOICES; ++voice) {
-		byte state = _envelopeState.state[voice];
+		const byte state = _envelopeState.state[voice];
 
 		if (state == 0 || state == 3)
 			continue;
@@ -346,14 +346,11 @@ void MidiDriver_AmigaSci0::doEnvelopes() {
 			continue;
 		}
 
-		if (state > 3)
-			state -= 2;
-		else
-			--state;
-
 		if (_envelopeState.countDown[voice] == 0) {
-			_envelopeState.countDown[voice] = _envelopeState.length[state][voice];
-			int8 velocity = _envelopeState.velocity[state][voice];
+			const uint envIdx = (state > 3 ? state - 2 : state - 1);
+
+			_envelopeState.countDown[voice] = _envelopeState.length[envIdx][voice];
+			int8 velocity = _envelopeState.velocity[envIdx][voice];
 
 			if (velocity <= 0) {
 				stopVoice(voice);
@@ -373,14 +370,14 @@ void MidiDriver_AmigaSci0::doEnvelopes() {
 			else
 				setChannelVolume(voice, (velocity * _masterVolume >> 6) * _voiceVolume[voice] >> 6);
 
-			int8 delta = _envelopeState.delta[state][voice];
+			const int8 delta = _envelopeState.delta[envIdx][voice];
 			if (delta < 0) {
-				_envelopeState.velocity[state][voice] -= delta;
-				if (_envelopeState.velocity[state][voice] > _envelopeState.velocity[state + 1][voice])
+				_envelopeState.velocity[envIdx][voice] -= delta;
+				if (_envelopeState.velocity[envIdx][voice] > _envelopeState.velocity[envIdx + 1][voice])
 					++_envelopeState.state[voice];
 			} else {
-				_envelopeState.velocity[state][voice] -= delta;
-				if (_envelopeState.velocity[state][voice] < _envelopeState.velocity[state + 1][voice])
+				_envelopeState.velocity[envIdx][voice] -= delta;
+				if (_envelopeState.velocity[envIdx][voice] < _envelopeState.velocity[envIdx + 1][voice])
 					++_envelopeState.state[voice];
 			}
 		}
