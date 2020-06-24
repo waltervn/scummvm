@@ -177,11 +177,8 @@ private:
 		bool loop;
 	};
 
-	struct {
-		byte state[NUM_VOICES];
-		byte countDown[NUM_VOICES];
-	} _envelopeState;
-
+	byte _envState[NUM_VOICES];
+	byte _envCntDown[NUM_VOICES];
 	int8 _envCurVel[NUM_VOICES];
 
 	Audio::Mixer *_mixer;
@@ -235,7 +232,9 @@ MidiDriver_AmigaSci0::MidiDriver_AmigaSci0(Audio::Mixer *mixer) :
 	memset(_voicePitchWheelOffset, 0, sizeof(_voicePitchWheelOffset));
 	memset(_chanVoice, 0, sizeof(_chanVoice));
 	memset(_voiceNote, 0, sizeof(_voiceNote));
-	memset(&_envelopeState, 0, sizeof(_envelopeState));
+	memset(_envState, 0, sizeof(_envState));
+	memset(_envCntDown, 0, sizeof(_envCntDown));
+	memset(_envCurVel, 0, sizeof(_envCurVel));
 
 	switch (g_sci->getGameId()) {
 	case GID_HOYLE1:
@@ -334,28 +333,28 @@ void MidiDriver_AmigaSci0::interrupt() {
 
 void MidiDriver_AmigaSci0::doEnvelopes() {
 	for (uint voice = 0; voice < NUM_VOICES; ++voice) {
-		const byte state = _envelopeState.state[voice];
+		const byte state = _envState[voice];
 
 		if (state == 0 || state == 3)
 			continue;
 
 		if (state == 6) {
 			stopVoice(voice);
-			_envelopeState.state[voice] = 0;
+			_envState[voice] = 0;
 			continue;
 		}
 
 		const Instrument *ins = _voice[voice].instrument;
 
-		if (_envelopeState.countDown[voice] == 0) {
+		if (_envCntDown[voice] == 0) {
 			const uint envIdx = (state > 3 ? state - 2 : state - 1);
 
-			_envelopeState.countDown[voice] = ins->envelope[envIdx].skip;
+			_envCntDown[voice] = ins->envelope[envIdx].skip;
 			int8 velocity = _envCurVel[voice];
 
 			if (velocity <= 0) {
 				stopVoice(voice);
-				_envelopeState.state[voice] = 0;
+				_envState[voice] = 0;
 				continue;
 			}
 
@@ -376,18 +375,18 @@ void MidiDriver_AmigaSci0::doEnvelopes() {
 				_envCurVel[voice] -= step;
 				if (_envCurVel[voice] > ins->envelope[envIdx].target) {
 					_envCurVel[voice] = ins->envelope[envIdx].target;
-					++_envelopeState.state[voice];
+					++_envState[voice];
 				}
 			} else {
 				_envCurVel[voice] -= step;
 				if (_envCurVel[voice] < ins->envelope[envIdx].target) {
 					_envCurVel[voice] = ins->envelope[envIdx].target;
-					++_envelopeState.state[voice];
+					++_envState[voice];
 				}
 			}
 		}
 
-		--_envelopeState.countDown[voice];
+		--_envCntDown[voice];
 	}
 }
 
@@ -418,11 +417,11 @@ void MidiDriver_AmigaSci0::setupVoice(int8 voice) {
 	}
 
 	_voice[voice].volume = _voice[voice].velocity >> 1;
-	_envelopeState.state[voice] = 0;
+	_envState[voice] = 0;
 	if (ins->envelope[0].skip != 0 && _voice[voice].loop) {
 		_envCurVel[voice] = _voice[voice].volume;
-		_envelopeState.countDown[voice] = 0;
-		_envelopeState.state[voice] = 1;
+		_envCntDown[voice] = 0;
+		_envState[voice] = 1;
 	}
 }
 
@@ -489,8 +488,8 @@ void MidiDriver_AmigaSci0::noteOn(int8 voice, int8 note, int8 velocity) {
 
 void MidiDriver_AmigaSci0::noteOff(int8 voice, int8 note) {
 	if (_voiceNote[voice] == note) {
-		if (_envelopeState.state[voice] != 0)
-			_envelopeState.state[voice] = 4;
+		if (_envState[voice] != 0)
+			_envState[voice] = 4;
 	}
 }
 
