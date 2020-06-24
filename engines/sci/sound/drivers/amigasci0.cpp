@@ -41,7 +41,7 @@ namespace Sci {
 // probably disable patch loading. Maybe the original interpreter
 // loads these disabled patches under some specific condition?
 
-static const uint16 periodTable[525] = {
+static const uint16 periodTable[] = {
 	0x3bb9, 0x3ade, 0x3a05, 0x3930, 0x385e, 0x378f, 0x36c3, 0x35fa,
 	0x3534, 0x3471, 0x33b0, 0x32f3, 0x3238, 0x3180, 0x30ca, 0x3017,
 	0x2f66, 0x2eb8, 0x2e0d, 0x2d64, 0x2cbd, 0x2c19, 0x2b77, 0x2ad7,
@@ -84,23 +84,6 @@ static const uint16 periodTable[525] = {
 	0x02a3, 0x0299, 0x0290, 0x0286, 0x027d, 0x0274, 0x026b, 0x0262,
 	0x0259, 0x0251, 0x0248, 0x0240, 0x0238, 0x0230, 0x0228, 0x0220,
 	0x0218, 0x0210, 0x0209, 0x0201, 0x01fa, 0x01f3, 0x01eb, 0x01e4,
-	0x01dd, 0x01d6, 0x01cf, 0x01c9, 0x01c2, 0x01bc, 0x01b5, 0x01af,
-	0x01a9, 0x01a3, 0x019d, 0x0197, 0x0191, 0x018b, 0x0186, 0x0180,
-	0x017b, 0x0175, 0x0170, 0x016a, 0x0165, 0x0160, 0x015b, 0x0156,
-	0x0151, 0x014c, 0x0147, 0x0143, 0x013e, 0x0139, 0x0135, 0x0130,
-	0x012c, 0x0128, 0x0124, 0x0120, 0x011c, 0x0118, 0x0114, 0x0110,
-	0x010c, 0x0108, 0x0104, 0x0101, 0x00fd, 0x00f9, 0x00f5, 0x00f2,
-	0x00ee, 0x00eb, 0x00e7, 0x00e4, 0x00e1, 0x00de, 0x00da, 0x00d7,
-	0x00d4, 0x00d1, 0x00ce, 0x00cb, 0x00c8, 0x00c5, 0x00c2, 0x00c0,
-	0x00bd, 0x00ba, 0x00b7, 0x00b5, 0x00b2, 0x00af, 0x00ad, 0x00aa,
-	0x00a8, 0x00a6, 0x00a3, 0x00a1, 0x009f, 0x009d, 0x009a, 0x0098,
-	0x0096, 0x0094, 0x0092, 0x0090, 0x008e, 0x008c, 0x008a, 0x0088,
-	0x0086, 0x0084, 0x0082, 0x0080, 0x007e, 0x0000, 0x0000, 0x0000,
-	// Last elements are 0x0000 to indicate out of Paula frequency range
-
-	// Early drivers contain two more octaves, transposed. The
-	// 0x0000 above will never be accessed in "early driver mode",
-	// due to missing pitch bend support.
 	0x01dd, 0x01d6, 0x01cf, 0x01c9, 0x01c2, 0x01bc, 0x01b5, 0x01af,
 	0x01a9, 0x01a3, 0x019d, 0x0197, 0x0191, 0x018b, 0x0186, 0x0180,
 	0x017b, 0x0175, 0x0170, 0x016a, 0x0165, 0x0160, 0x015b, 0x0156,
@@ -194,8 +177,7 @@ private:
 	Voice _voice[NUM_VOICES];
 	byte _voicePatch[NUM_VOICES];
 	byte _voiceVolume[NUM_VOICES]; // Amiga volume 0-63
-	int8 _voicePitchWheelSign[NUM_VOICES];
-	byte _voicePitchWheelOffset[NUM_VOICES];
+	uint16 _voicePitch[NUM_VOICES];
 	int8 _chanVoice[MIDI_CHANNELS];
 	int8 _voiceNote[NUM_VOICES];
 
@@ -228,8 +210,7 @@ MidiDriver_AmigaSci0::MidiDriver_AmigaSci0(Audio::Mixer *mixer) :
 	memset(_voice, 0, sizeof(_voice));
 	memset(_voicePatch, 0, sizeof(_voicePatch));
 	memset(_voiceVolume, 0, sizeof(_voiceVolume));
-	memset(_voicePitchWheelSign, 0, sizeof(_voicePitchWheelSign));
-	memset(_voicePitchWheelOffset, 0, sizeof(_voicePitchWheelOffset));
+	memset(_voicePitch, 0, sizeof(_voicePitch));
 	memset(_chanVoice, 0, sizeof(_chanVoice));
 	memset(_voiceNote, 0, sizeof(_voiceNote));
 	memset(_envState, 0, sizeof(_envState));
@@ -314,8 +295,7 @@ void MidiDriver_AmigaSci0::initTrack(SciSpan<const byte>& header) {
 
 	for (uint i = 0; i < NUM_VOICES; ++i) {
 		_voiceNote[i] = -1;
-		_voicePitchWheelSign[i] = 0;
-		_voicePitchWheelOffset[i] = 0;
+		_voicePitch[i] = 0x2000;
 	}
 }
 
@@ -443,17 +423,13 @@ bool MidiDriver_AmigaSci0::calcVoiceStep(int8 voice) {
 		note = 101;
 
 	int16 index = (note + _voice[voice].instrument->transpose) * 4;
-	if (_voicePitchWheelSign[voice] != 0) {
-		if (_voicePitchWheelSign[voice] > 0)
-			index += _voicePitchWheelOffset[voice];
-		else
-			index -= _voicePitchWheelOffset[voice];
 
-		if (index < 0 || index > 430)
-			return false;
-	}
+	if (_voicePitch[voice] >= 0x2000)
+		index += (_voicePitch[voice] - 0x2000) / 171;
+	else
+		index -= (0x2000 - _voicePitch[voice]) / 171;
 
-	if (periodTable[index] == 0)
+	if (index < 0 || index >= ARRAYSIZE(periodTable))
 		return false;
 
 	setChannelPeriod(voice, periodTable[index]);
@@ -494,20 +470,7 @@ void MidiDriver_AmigaSci0::noteOff(int8 voice, int8 note) {
 }
 
 void MidiDriver_AmigaSci0::pitchWheel(int8 voice, int16 pitch) {
-	if (pitch == 0x2000) {
-		_voicePitchWheelSign[voice] = 0;
-		_voicePitchWheelOffset[voice] = 0;
-	} else {
-		if (pitch >= 0x2000) {
-			pitch -= 0x2000;
-			_voicePitchWheelSign[voice] = 1;
-		} else {
-			pitch = 0x2000 - pitch;
-			_voicePitchWheelSign[voice] = -1;
-		}
-
-		_voicePitchWheelOffset[voice] = pitch / 171;
-	}
+	_voicePitch[voice] = pitch;
 
 	if (_voiceNote[voice] != -1)
 		calcVoiceStep(voice);
