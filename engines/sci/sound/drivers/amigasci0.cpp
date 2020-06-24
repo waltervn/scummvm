@@ -180,10 +180,9 @@ private:
 	struct {
 		byte state[NUM_VOICES];
 		byte countDown[NUM_VOICES];
-		byte length[4][NUM_VOICES];
-		int8 velocity[4][NUM_VOICES];
-		int8 delta[4][NUM_VOICES];
 	} _envelopeState;
+
+	int8 _envCurVel[NUM_VOICES];
 
 	Audio::Mixer *_mixer;
 	Audio::SoundHandle _mixerSoundHandle;
@@ -346,11 +345,13 @@ void MidiDriver_AmigaSci0::doEnvelopes() {
 			continue;
 		}
 
+		const Instrument *ins = _voice[voice].instrument;
+
 		if (_envelopeState.countDown[voice] == 0) {
 			const uint envIdx = (state > 3 ? state - 2 : state - 1);
 
-			_envelopeState.countDown[voice] = _envelopeState.length[envIdx][voice];
-			int8 velocity = _envelopeState.velocity[envIdx][voice];
+			_envelopeState.countDown[voice] = ins->envelope[envIdx].skip;
+			int8 velocity = _envCurVel[voice];
 
 			if (velocity <= 0) {
 				stopVoice(voice);
@@ -370,15 +371,19 @@ void MidiDriver_AmigaSci0::doEnvelopes() {
 			else
 				setChannelVolume(voice, (velocity * _masterVolume >> 6) * _voiceVolume[voice] >> 6);
 
-			const int8 delta = _envelopeState.delta[envIdx][voice];
-			if (delta < 0) {
-				_envelopeState.velocity[envIdx][voice] -= delta;
-				if (_envelopeState.velocity[envIdx][voice] > _envelopeState.velocity[envIdx + 1][voice])
+			const int8 step = ins->envelope[envIdx].step;
+			if (step < 0) {
+				_envCurVel[voice] -= step;
+				if (_envCurVel[voice] > ins->envelope[envIdx].target) {
+					_envCurVel[voice] = ins->envelope[envIdx].target;
 					++_envelopeState.state[voice];
+				}
 			} else {
-				_envelopeState.velocity[envIdx][voice] -= delta;
-				if (_envelopeState.velocity[envIdx][voice] < _envelopeState.velocity[envIdx + 1][voice])
+				_envCurVel[voice] -= step;
+				if (_envCurVel[voice] < ins->envelope[envIdx].target) {
+					_envCurVel[voice] = ins->envelope[envIdx].target;
 					++_envelopeState.state[voice];
+				}
 			}
 		}
 
@@ -414,19 +419,8 @@ void MidiDriver_AmigaSci0::setupVoice(int8 voice) {
 
 	_voice[voice].volume = _voice[voice].velocity >> 1;
 	_envelopeState.state[voice] = 0;
-	_envelopeState.length[0][voice] = ins->envelope[0].skip;
-	if (_envelopeState.length[0][voice] != 0 && _voice[voice].loop) {
-		_envelopeState.length[1][voice] = ins->envelope[1].skip;
-		_envelopeState.length[2][voice] = ins->envelope[2].skip;
-		_envelopeState.length[3][voice] = ins->envelope[3].skip;
-		_envelopeState.delta[0][voice] = ins->envelope[0].step;
-		_envelopeState.delta[1][voice] = ins->envelope[1].step;
-		_envelopeState.delta[2][voice] = ins->envelope[2].step;
-		_envelopeState.delta[3][voice] = ins->envelope[3].step;
-		_envelopeState.velocity[0][voice] = _voice[voice].volume;
-		_envelopeState.velocity[1][voice] = ins->envelope[0].target;
-		_envelopeState.velocity[2][voice] = ins->envelope[1].target;
-		_envelopeState.velocity[3][voice] = ins->envelope[2].target;
+	if (ins->envelope[0].skip != 0 && _voice[voice].loop) {
+		_envCurVel[voice] = _voice[voice].volume;
 		_envelopeState.countDown[voice] = 0;
 		_envelopeState.state[voice] = 1;
 	}
@@ -554,9 +548,8 @@ void MidiDriver_AmigaSci0::send(uint32 b) {
 }
 
 void MidiDriver_AmigaSci0::setVolume(byte volume) {
-	// FIXME This doesn't seem to make sense, as volume should be 0..15
-	if (volume > 64)
-		volume = 64;
+	if (volume > 15)
+		volume = 15;
 	_masterVolume = volume << 2;
 }
 
@@ -606,14 +599,16 @@ bool MidiDriver_AmigaSci0::loadInstruments(Common::SeekableReadStream &patch) {
 		instrument->seg3Offset = patch.readUint32BE();
 		instrument->seg3Size = patch.readSint16BE();
 
-		for (uint env = 0; env < ARRAYSIZE(instrument->envelope); ++env)
-			instrument->envelope[env].skip = patch.readByte();
+		for (uint stage = 0; stage < ARRAYSIZE(instrument->envelope); ++stage)
+			instrument->envelope[stage].skip = patch.readByte();
 
-		for (uint env = 0; env < ARRAYSIZE(instrument->envelope); ++env)
-			instrument->envelope[env].step = patch.readByte();
+		for (uint stage = 0; stage < ARRAYSIZE(instrument->envelope); ++stage)
+			instrument->envelope[stage].step = patch.readByte();
 
-		for (uint env = 0; env < ARRAYSIZE(instrument->envelope); ++env)
-			instrument->envelope[env].target = patch.readByte();
+		// In the original, it uses the stage 0 step as the stage 3 target,
+		// but we (most likely) don't have to replicate this bug.
+		for (uint stage = 0; stage < ARRAYSIZE(instrument->envelope); ++stage)
+			instrument->envelope[stage].target = patch.readByte();
 
 		int32 sampleSize = instrument->seg1Size + instrument->seg2Size + instrument->seg3Size;
 		sampleSize <<= 1;
@@ -631,6 +626,9 @@ bool MidiDriver_AmigaSci0::loadInstruments(Common::SeekableReadStream &patch) {
 		debugC(kDebugLevelSound, "\t\tSegment 2: offset %d, size %d", instrument->seg2Offset, instrument->seg2Size * 2);
 		debugC(kDebugLevelSound, "\t\tSegment 3: offset %d, size %d", instrument->seg3Offset, instrument->seg3Size * 2);
 		debugC(kDebugLevelSound, "\t\tTranspose = %d, Fixed note = %d, Loop = %d", instrument->transpose, instrument->fixedNote, instrument->loop);
+		debugC(kDebugLevelSound, "\t\tEnvelope:");
+		for (uint stage = 0; stage < ARRAYSIZE(instrument->envelope); ++stage)
+			debugC(kDebugLevelSound, "\t\t\tStage %d: skip %d, step %d, target %d", stage, instrument->envelope[stage].skip, instrument->envelope[stage].step, instrument->envelope[stage].target);
 	}
 
 	return true;
