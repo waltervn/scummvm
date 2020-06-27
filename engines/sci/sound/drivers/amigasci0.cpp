@@ -452,8 +452,10 @@ void MidiDriver_AmigaSci0::Voice::noteOn(int8 note, int8 velocity) {
 
 void MidiDriver_AmigaSci0::Voice::noteOff(int8 note) {
 	if (_note == note) {
-		if (_envState != 0)
+		if (_envState != 0) {
+			_envCurVel = _instrument->envelope[1].target;
 			_envState = 4;
+		}
 	}
 }
 
