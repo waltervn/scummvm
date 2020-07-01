@@ -41,7 +41,6 @@ namespace Sci {
 typedef uint32 ufrac_t;
 static inline ufrac_t uintToUfrac(uint16 value) { return value << FRAC_BITS; }
 static inline uint16 ufracToUint(ufrac_t value) { return value >> FRAC_BITS; }
-static inline ufrac_t doubleToUfrac(double value) { return (ufrac_t)(value * FRAC_ONE); }
 
 template <typename T>
 class Mixer_Mac : public Audio::AudioStream {
@@ -73,9 +72,6 @@ public:
 	int readBuffer(int16 *data, const int numSamples) override;
 	bool endOfData() const override { return false; }
 
-protected:
-	const Mode _mode;
-
 private:
 	template <Mode mode>
 	void generateSamples(int16 *buf, int len);
@@ -92,9 +88,8 @@ private:
 
 	ufrac_t _nextTick;
 	ufrac_t _samplesPerTick;
-
 	bool _isPlaying;
-
+	const Mode _mode;
 	Channel _mixChannels[kChannels];
 };
 
@@ -135,7 +130,15 @@ void Mixer_Mac<T>::setChannelData(uint channel, const byte *data, uint16 startOf
 template <typename T>
 void Mixer_Mac<T>::setChannelStep(uint channel, ufrac_t step) {
 	assert(channel < kChannels);
-	_mixChannels[channel].step = step;
+
+	if (_mode == kModeAuthentic) {
+		_mixChannels[channel].step = step;
+	} else {
+		// We could take 11127Hz here, but it appears the original steps were
+		// computed for 11000Hz
+		// FIXME: One or two more bits of step precision might be nice here
+		_mixChannels[channel].step = (ufrac_t)(step * 11000ULL / getRate());
+	}
 }
 
 template <typename T>
@@ -355,7 +358,7 @@ protected:
 	void *_timerParam;
 	bool _isOpen;
 
-	virtual uint32 *loadFreqTable(Common::SeekableReadStream &stream);
+	uint32 *loadFreqTable(Common::SeekableReadStream &stream);
 	const Wave *loadWave(Common::SeekableReadStream &stream, bool isEarlyPatch);
 	bool loadInstruments(Common::SeekableReadStream &patch, bool isEarlyPatch);
 	void freeInstruments();
@@ -1108,9 +1111,6 @@ public:
 	// MidiPlayer
 	int open(ResourceManager *resMan) override;
 
-	// MidiPlayer_AmigaMac1
-	uint32 *loadFreqTable(Common::SeekableReadStream &stream) override;
-
 	// MidiDriver
 	void close() override;
 
@@ -1177,22 +1177,6 @@ int MidiPlayer_Mac1::open(ResourceManager *resMan) {
 void MidiPlayer_Mac1::close() {
 	MidiPlayer_AmigaMac1::close();
 	stop();
-}
-
-uint32 *MidiPlayer_Mac1::loadFreqTable(Common::SeekableReadStream &stream) {
-	if (_mode == kModeAuthentic)
-		return MidiPlayer_AmigaMac1::loadFreqTable(stream);
-
-	uint32 *freqTable = new ufrac_t[kFreqTableSize];
-
-	stream.seek(kFreqTableSize << 2, SEEK_CUR);
-
-	const uint16 sampleRate = stream.readUint16BE();
-
-	for (int i = 0; i < kFreqTableSize; ++i)
-		freqTable[i] = doubleToUfrac((sampleRate << 10) * pow(2, (i - 20) / 48.) / getRate());
-
-	return freqTable;
 }
 
 void MidiPlayer_Mac1::interrupt() {
