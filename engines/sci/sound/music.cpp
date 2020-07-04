@@ -114,14 +114,9 @@ void SciMusic::init() {
 	switch (_musicType) {
 	case MT_ADLIB:
 		// FIXME: There's no Amiga sound option, so we hook it up to AdLib
-		if (platform == Common::kPlatformMacintosh) {
+		if (platform == Common::kPlatformMacintosh || platform == Common::kPlatformAmiga) {
 			if (getSciVersion() <= SCI_VERSION_0_LATE)
-				_pMidiDrv = MidiPlayer_MacSci0_create(_soundVersion);
-			else
-				_pMidiDrv = MidiPlayer_AmigaMac1_create(_soundVersion, platform);
-		} else if (platform == Common::kPlatformAmiga) {
-			if (getSciVersion() <= SCI_VERSION_0_LATE)
-				_pMidiDrv = MidiPlayer_AmigaSci0_create(_soundVersion);
+				_pMidiDrv = MidiPlayer_AmigaMac0_create(_soundVersion, platform);
 			else
 				_pMidiDrv = MidiPlayer_AmigaMac1_create(_soundVersion, platform);
 		} else

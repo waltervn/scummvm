@@ -140,7 +140,7 @@ protected:
 };
 
 extern MidiPlayer *MidiPlayer_AdLib_create(SciVersion version);
-extern MidiPlayer *MidiPlayer_AmigaSci0_create(SciVersion version);
+extern MidiPlayer *MidiPlayer_AmigaMac0_create(SciVersion version, Common::Platform platform);
 extern MidiPlayer *MidiPlayer_AmigaMac1_create(SciVersion version, Common::Platform platform);
 extern MidiPlayer *MidiPlayer_PCJr_create(SciVersion version);
 extern MidiPlayer *MidiPlayer_PCSpeaker_create(SciVersion version);
