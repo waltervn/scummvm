@@ -34,6 +34,291 @@
 
 namespace Sci {
 
+class MidiPlayer_AmigaMac0 : public MidiPlayer {
+public:
+	enum {
+		kVoices = 4,
+		kBaseFreq = 60
+	};
+
+	MidiPlayer_AmigaMac0(SciVersion version, Audio::Mixer *mixer);
+	virtual ~MidiPlayer_AmigaMac0();
+
+	// MidiPlayer
+	void close() override;
+	void send(uint32 b) override;
+	void setTimerCallback(void *timerParam, Common::TimerManager::TimerProc timerProc) override;
+	uint32 getBaseTempo() override { return (1000000 + kBaseFreq / 2) / kBaseFreq; }
+	byte getPlayId() const override { return 0x40; }
+	int getPolyphony() const override { return kVoices; }
+	bool hasRhythmChannel() const override { return false; }
+	void setVolume(byte volume) override { _masterVolume = CLIP<byte>(volume, 0, 15); }
+	int getVolume() override { return _masterVolume; }
+	void playSwitch(bool play) override { _playSwitch = play; }
+	void initTrack(SciSpan<const byte> &trackData) override;
+
+protected:
+	bool _playSwitch;
+	uint _masterVolume;
+
+	Audio::Mixer *_mixer;
+	Audio::SoundHandle _mixerSoundHandle;
+	Common::TimerManager::TimerProc _timerProc;
+	void *_timerParam;
+	bool _isOpen;
+
+	void freeInstruments();
+	void onTimer();
+
+	struct Instrument {
+		Instrument() :
+			name(),
+			loop(false),
+			fixedNote(false),
+			seg2Offset(0),
+			seg3Offset(0),
+			samples(nullptr),
+			transpose(0),
+			envelope() {}
+
+		~Instrument() { delete samples; }
+
+		char name[31];
+		bool loop;
+		bool fixedNote;
+		uint32 seg2Offset;
+		uint32 seg3Offset;
+		const byte *samples;
+		int16 transpose;
+
+		struct Envelope {
+			byte skip;
+			int8 step;
+			byte target;
+		} envelope[4];
+	};
+
+	Common::Array<const Instrument *> _instruments;
+
+	class Voice {
+	public:
+		Voice(MidiPlayer_AmigaMac0 &driver) :
+			_patch(0),
+			_note(-1),
+			_velocity(0),
+			_pitch(0),
+			_instrument(nullptr),
+			_loop(false),
+			_envState(0),
+			_envCntDown(0),
+			_envCurVel(0),
+			_volume(0),
+			_driver(driver) {}
+
+		virtual ~Voice() {}
+
+		virtual void noteOn(int8 note, int8 velocity) = 0;
+		virtual void noteOff(int8 note) = 0;
+		virtual void setPitchWheel(int16 pitch) {}
+
+		virtual void stop() = 0;
+		virtual void setEnvelopeVolume(byte volume) = 0;
+
+		void processEnvelope();
+
+		byte _patch;
+		int8 _note;
+		byte _velocity;
+		uint16 _pitch;
+
+		const Instrument *_instrument;
+		bool _loop;
+
+		byte _envState;
+		byte _envCntDown;
+		int8 _envCurVel;
+
+		byte _volume;
+
+	private:
+		MidiPlayer_AmigaMac0 &_driver;
+	};
+
+	Common::Array<Voice *> _voices;
+	typedef Common::Array<Voice *>::const_iterator VoiceIt;
+
+	Voice *_channels[MIDI_CHANNELS];
+};
+
+MidiPlayer_AmigaMac0::MidiPlayer_AmigaMac0(SciVersion version, Audio::Mixer *mixer) :
+	MidiPlayer(version),
+	_playSwitch(true),
+	_masterVolume(15),
+	_mixer(mixer),
+	_mixerSoundHandle(),
+	_timerProc(),
+	_timerParam(nullptr),
+	_isOpen(false),
+	_channels() {}
+
+MidiPlayer_AmigaMac0::~MidiPlayer_AmigaMac0() {
+	close();
+}
+
+void MidiPlayer_AmigaMac0::close() {
+	if (!_isOpen)
+		return;
+
+	_mixer->stopHandle(_mixerSoundHandle);
+
+	for (uint ci = 0; ci < ARRAYSIZE(_channels); ++ci)
+		_channels[ci] = nullptr;
+
+	for (VoiceIt v = _voices.begin(); v != _voices.end(); ++v)
+		delete *v;
+	_voices.clear();
+
+	freeInstruments();
+
+	_isOpen = false;
+}
+
+void MidiPlayer_AmigaMac0::initTrack(SciSpan<const byte>& header) {
+	if (!_isOpen)
+		return;
+
+	uint8 readPos = 0;
+	const uint8 caps = header.getInt8At(readPos++);
+
+	// We only implement the MIDI functionality here, samples are
+	// handled by the generic sample code
+	if (caps != 0)
+		return;
+
+	uint vi = 0;
+
+	for (uint i = 0; i < 15; ++i) {
+		readPos++;
+		const uint8 flags = header.getInt8At(readPos++);
+
+		if ((flags & getPlayId()) && (vi < kVoices))
+			_channels[i] = _voices[vi++];
+		else
+			_channels[i] = nullptr;
+	}
+
+	_channels[15] = nullptr;
+
+	for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it) {
+		Voice *voice = *it;
+		voice->stop();
+		voice->_note = -1;
+		voice->_envState = 0;
+		voice->_pitch = 0x2000;
+	}
+}
+
+void MidiPlayer_AmigaMac0::freeInstruments() {
+	for (Common::Array<const Instrument *>::iterator it = _instruments.begin(); it != _instruments.end(); ++it)
+		delete *it;
+
+	_instruments.clear();
+}
+
+void MidiPlayer_AmigaMac0::onTimer() {
+	if (_timerProc)
+		(*_timerProc)(_timerParam);
+
+	for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it)
+		(*it)->processEnvelope();
+}
+
+void MidiPlayer_AmigaMac0::setTimerCallback(void *timerParam, Common::TimerManager::TimerProc timerProc) {
+	_timerProc = timerProc;
+	_timerParam = timerParam;
+}
+
+void MidiPlayer_AmigaMac0::send(uint32 b) {
+	byte command = b & 0xf0;
+	byte channel = b & 0xf;
+	byte op1 = (b >> 8) & 0xff;
+	byte op2 = (b >> 16) & 0xff;
+
+	Voice *voice = _channels[channel];
+
+	if (!voice)
+		return;
+
+	switch(command) {
+	case 0x80:
+		voice->noteOff(op1);
+		break;
+	case 0x90:
+		voice->noteOn(op1, op2);
+		break;
+	case 0xb0:
+		// Not in original driver
+		if (op1 == 0x7b && voice->_note != -1 && voice->_envState < 4)
+			voice->noteOff(voice->_note);
+		break;
+	case 0xc0:
+		voice->_patch = op1;
+		break;
+	case 0xe0:
+		voice->setPitchWheel((op2 << 7) | op1);
+		break;
+	}
+}
+
+void MidiPlayer_AmigaMac0::Voice::processEnvelope() {
+	if (_envState == 0 || _envState == 3)
+		return;
+
+	if (_envState == 6) {
+		stop();
+		_envState = 0;
+		return;
+	}
+
+	if (_envCntDown == 0) {
+		const uint envIdx = (_envState > 3 ? _envState - 2 : _envState - 1);
+
+		_envCntDown = _instrument->envelope[envIdx].skip;
+		int8 velocity = _envCurVel;
+
+		if (velocity <= 0) {
+			stop();
+			_envState = 0;
+			return;
+		}
+
+		if (velocity > 63)
+			velocity = 63;
+
+		if (!_driver._playSwitch)
+			velocity = 0;
+
+		setEnvelopeVolume(velocity);
+
+		const int8 step = _instrument->envelope[envIdx].step;
+		if (step < 0) {
+			_envCurVel -= step;
+			if (_envCurVel > _instrument->envelope[envIdx].target) {
+				_envCurVel = _instrument->envelope[envIdx].target;
+				++_envState;
+			}
+		} else {
+			_envCurVel -= step;
+			if (_envCurVel < _instrument->envelope[envIdx].target) {
+				_envCurVel = _instrument->envelope[envIdx].target;
+				++_envState;
+			}
+		}
+	}
+
+	--_envCntDown;
+}
+
 static const frac_t stepTable[132] = {
 	0x00002000, 0x000021e7, 0x000023eb, 0x0000260e,
 	0x00002851, 0x00002ab7, 0x00002d41, 0x00002ff2,
@@ -659,297 +944,6 @@ public:
 	void initTrack(SciSpan<const byte> &trackData) { static_cast<MidiDriver_MacSci0 *>(_driver)->initTrack(trackData); }
 };
 
-class MidiPlayer_AmigaMac0 : public MidiPlayer {
-public:
-	enum {
-		kVoices = 4,
-		kBaseFreq = 60
-	};
-
-	MidiPlayer_AmigaMac0(SciVersion version, Audio::Mixer *mixer);
-	virtual ~MidiPlayer_AmigaMac0();
-
-	// MidiPlayer
-	void close() override;
-	void send(uint32 b) override;
-	void setTimerCallback(void *timerParam, Common::TimerManager::TimerProc timerProc) override;
-	uint32 getBaseTempo() override { return (1000000 + kBaseFreq / 2) / kBaseFreq; }
-	byte getPlayId() const override { return 0x40; }
-	int getPolyphony() const override { return kVoices; }
-	bool hasRhythmChannel() const override { return false; }
-	void setVolume(byte volume) override { _masterVolume = CLIP<byte>(volume, 0, 15); }
-	int getVolume() override { return _masterVolume; }
-	void playSwitch(bool play) override { _playSwitch = play; }
-	void initTrack(SciSpan<const byte> &trackData) override;
-
-protected:
-	bool _playSwitch;
-	uint _masterVolume;
-
-	Audio::Mixer *_mixer;
-	Audio::SoundHandle _mixerSoundHandle;
-	Common::TimerManager::TimerProc _timerProc;
-	void *_timerParam;
-	bool _isOpen;
-
-	void freeInstruments();
-	void onTimer();
-
-	struct Instrument {
-		Instrument() :
-			name(),
-			loop(false),
-			fixedNote(false),
-			seg1Size(0),
-			seg2Offset(0),
-			seg2Size(0),
-			seg3Offset(0),
-			seg3Size(0),
-			samples(nullptr),
-			transpose(0),
-			envelope() {}
-
-		~Instrument() { delete samples; }
-
-		char name[31];
-		bool loop;
-		bool fixedNote;
-		int16 seg1Size;
-		uint32 seg2Offset;
-		int16 seg2Size;
-		uint32 seg3Offset;
-		int16 seg3Size;
-		const byte *samples;
-		int8 transpose;
-
-		struct Envelope {
-			byte skip;
-			int8 step;
-			byte target;
-		} envelope[4];
-	};
-
-	Common::Array<const Instrument *> _instruments;
-
-	class Voice {
-	public:
-		Voice(MidiPlayer_AmigaMac0 &driver) :
-			_patch(0),
-			_note(-1),
-			_velocity(0),
-			_pitch(0),
-			_instrument(nullptr),
-			_loop(false),
-			_envState(0),
-			_envCntDown(0),
-			_envCurVel(0),
-			_volume(0),
-			_driver(driver) {}
-
-		virtual ~Voice() {}
-
-		virtual void noteOn(int8 note, int8 velocity) = 0;
-		virtual void noteOff(int8 note) = 0;
-		virtual void setPitchWheel(int16 pitch) {}
-
-		virtual void stop() = 0;
-		virtual void setEnvelopeVolume(byte volume) = 0;
-
-		void processEnvelope();
-
-		byte _patch;
-		int8 _note;
-		byte _velocity;
-		uint16 _pitch;
-
-		const Instrument *_instrument;
-		bool _loop;
-
-		byte _envState;
-		byte _envCntDown;
-		int8 _envCurVel;
-
-		byte _volume;
-
-	private:
-		MidiPlayer_AmigaMac0 &_driver;
-	};
-
-	Common::Array<Voice *> _voices;
-	typedef Common::Array<Voice *>::const_iterator VoiceIt;
-
-	Voice *_channels[MIDI_CHANNELS];
-};
-
-MidiPlayer_AmigaMac0::MidiPlayer_AmigaMac0(SciVersion version, Audio::Mixer *mixer) :
-	MidiPlayer(version),
-	_playSwitch(true),
-	_masterVolume(15),
-	_mixer(mixer),
-	_mixerSoundHandle(),
-	_timerProc(),
-	_timerParam(nullptr),
-	_isOpen(false),
-	_channels() {}
-
-MidiPlayer_AmigaMac0::~MidiPlayer_AmigaMac0() {
-	close();
-}
-
-void MidiPlayer_AmigaMac0::close() {
-	if (!_isOpen)
-		return;
-
-	_mixer->stopHandle(_mixerSoundHandle);
-
-	for (uint ci = 0; ci < ARRAYSIZE(_channels); ++ci)
-		_channels[ci] = nullptr;
-
-	for (VoiceIt v = _voices.begin(); v != _voices.end(); ++v)
-		delete *v;
-	_voices.clear();
-
-	freeInstruments();
-
-	_isOpen = false;
-}
-
-void MidiPlayer_AmigaMac0::initTrack(SciSpan<const byte>& header) {
-	if (!_isOpen)
-		return;
-
-	uint8 readPos = 0;
-	const uint8 caps = header.getInt8At(readPos++);
-
-	// We only implement the MIDI functionality here, samples are
-	// handled by the generic sample code
-	if (caps != 0)
-		return;
-
-	uint vi = 0;
-
-	for (uint i = 0; i < 15; ++i) {
-		readPos++;
-		const uint8 flags = header.getInt8At(readPos++);
-
-		if ((flags & getPlayId()) && (vi < kVoices))
-			_channels[i] = _voices[vi++];
-		else
-			_channels[i] = nullptr;
-	}
-
-	_channels[15] = nullptr;
-
-	for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it) {
-		Voice *voice = *it;
-		voice->stop();
-		voice->_note = -1;
-		voice->_envState = 0;
-		voice->_pitch = 0x2000;
-	}
-}
-
-void MidiPlayer_AmigaMac0::freeInstruments() {
-	for (Common::Array<const Instrument *>::iterator it = _instruments.begin(); it != _instruments.end(); ++it)
-		delete *it;
-
-	_instruments.clear();
-}
-
-void MidiPlayer_AmigaMac0::onTimer() {
-	if (_timerProc)
-		(*_timerProc)(_timerParam);
-
-	for (VoiceIt it = _voices.begin(); it != _voices.end(); ++it)
-		(*it)->processEnvelope();
-}
-
-void MidiPlayer_AmigaMac0::setTimerCallback(void *timerParam, Common::TimerManager::TimerProc timerProc) {
-	_timerProc = timerProc;
-	_timerParam = timerParam;
-}
-
-void MidiPlayer_AmigaMac0::send(uint32 b) {
-	byte command = b & 0xf0;
-	byte channel = b & 0xf;
-	byte op1 = (b >> 8) & 0xff;
-	byte op2 = (b >> 16) & 0xff;
-
-	Voice *voice = _channels[channel];
-
-	if (!voice)
-		return;
-
-	switch(command) {
-	case 0x80:
-		voice->noteOff(op1);
-		break;
-	case 0x90:
-		voice->noteOn(op1, op2);
-		break;
-	case 0xb0:
-		// Not in original driver
-		if (op1 == 0x7b && voice->_note != -1 && voice->_envState < 4)
-			voice->noteOff(voice->_note);
-		break;
-	case 0xc0:
-		voice->_patch = op1;
-		break;
-	case 0xe0:
-		voice->setPitchWheel((op2 << 7) | op1);
-		break;
-	}
-}
-
-void MidiPlayer_AmigaMac0::Voice::processEnvelope() {
-	if (_envState == 0 || _envState == 3)
-		return;
-
-	if (_envState == 6) {
-		stop();
-		_envState = 0;
-		return;
-	}
-
-	if (_envCntDown == 0) {
-		const uint envIdx = (_envState > 3 ? _envState - 2 : _envState - 1);
-
-		_envCntDown = _instrument->envelope[envIdx].skip;
-		int8 velocity = _envCurVel;
-
-		if (velocity <= 0) {
-			stop();
-			_envState = 0;
-			return;
-		}
-
-		if (velocity > 63)
-			velocity = 63;
-
-		if (!_driver._playSwitch)
-			velocity = 0;
-
-		setEnvelopeVolume(velocity);
-
-		const int8 step = _instrument->envelope[envIdx].step;
-		if (step < 0) {
-			_envCurVel -= step;
-			if (_envCurVel > _instrument->envelope[envIdx].target) {
-				_envCurVel = _instrument->envelope[envIdx].target;
-				++_envState;
-			}
-		} else {
-			_envCurVel -= step;
-			if (_envCurVel < _instrument->envelope[envIdx].target) {
-				_envCurVel = _instrument->envelope[envIdx].target;
-				++_envState;
-			}
-		}
-	}
-
-	--_envCntDown;
-}
-
 // FIXME: SQ3, LSL2 and HOYLE1 for Amiga don't seem to load any
 // patches, even though patches are present. Later games do load
 // patches, but include disabled patches with a 'd' appended to the
@@ -980,9 +974,21 @@ public:
 	void interrupt() override { onTimer(); }
 
 private:
-	class AmigaVoice : public MidiPlayer_AmigaMac0::Voice {
+	struct AmigaInstrument : public Instrument {
+		AmigaInstrument() :
+			Instrument(),
+			seg1Size(0),
+			seg2Size(0),
+			seg3Size(0) {}
+
+		int16 seg1Size;
+		int16 seg2Size;
+		int16 seg3Size;
+	};
+
+	class AmigaVoice : public Voice {
 	public:
-		AmigaVoice(MidiPlayer_Amiga0 &driver, uint id) : MidiPlayer_AmigaMac0::Voice(driver), _id(id), _amigaDriver(driver) {}
+		AmigaVoice(MidiPlayer_Amiga0 &driver, uint id) : Voice(driver), _id(id), _amigaDriver(driver) {}
 
 	private:
 		void noteOn(int8 note, int8 velocity) override;
@@ -1054,7 +1060,7 @@ int MidiPlayer_Amiga0::open(ResourceManager *resMan) {
 	_mixer->playStream(Audio::Mixer::kPlainSoundType, &_mixerSoundHandle, this, -1, _mixer->kMaxChannelVolume, 0, DisposeAfterUse::NO, false, true);
 	_isOpen = true;
 
-	return Common::kNoError;
+	return 0;
 }
 
 void MidiPlayer_Amiga0::close() {
@@ -1124,19 +1130,21 @@ void MidiPlayer_Amiga0::AmigaVoice::noteOn(int8 note, int8 velocity) {
 	if (!calcVoiceStep())
 		return;
 
-	const int8 *seg1 = (const int8 *)_instrument->samples;
+	const AmigaInstrument *ins = static_cast<const AmigaInstrument *>(_instrument);
+
+	const int8 *seg1 = (const int8 *)ins->samples;
 	const int8 *seg2 = seg1;
-	int16 seg1Size = _instrument->seg1Size; 
-	seg2 += _instrument->seg2Offset & 0xfffe;
-	int16 seg2Size = _instrument->seg2Size;
+	int16 seg1Size = ins->seg1Size; 
+	seg2 += ins->seg2Offset & 0xfffe;
+	int16 seg2Size = ins->seg2Size;
 
 	if (!_loop) {
-		seg1Size = seg1Size + seg2Size + _instrument->seg3Size;
+		seg1Size = seg1Size + seg2Size + ins->seg3Size;
 		seg2 = nullptr;
 		seg2Size = 0;
 	}
 
-	if (_instrument->envelope[0].skip != 0 && _loop) {
+	if (ins->envelope[0].skip != 0 && _loop) {
 		_envCurVel = _volume;
 		_envCntDown = 0;
 		_envState = 1;
@@ -1195,7 +1203,7 @@ bool MidiPlayer_Amiga0::loadInstruments(Common::SeekableReadStream &patch) {
 	}
 
 	for (uint i = 0; i < instrumentCount; ++i) {
-		Instrument *instrument = new Instrument();
+		AmigaInstrument *instrument = new AmigaInstrument();
 
 		const uint16 patchIdx = patch.readUint16BE();
 		_instruments[patchIdx] = instrument;
@@ -1208,7 +1216,7 @@ bool MidiPlayer_Amiga0::loadInstruments(Common::SeekableReadStream &patch) {
 		const uint16 flags = patch.readUint16BE();
 		instrument->loop = flags & 1;
 		instrument->fixedNote = !(flags & 2);
-		instrument->transpose = patch.readByte();
+		instrument->transpose = patch.readSByte();
 		instrument->seg1Size = patch.readSint16BE();
 		instrument->seg2Offset = patch.readUint32BE();
 		instrument->seg2Size = patch.readSint16BE();
