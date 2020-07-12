@@ -40,7 +40,7 @@ class Mixer_Mac : public Audio::AudioStream {
 public:
 	enum {
 		kChannels = 4,
-		kBaseFreq = 60
+		kInterruptFreq = 60
 	};
 
 	enum Mode {
@@ -50,8 +50,9 @@ public:
 	};
 
 	Mixer_Mac(Mode mode);
-	void start();
-	void stop();
+	void startMixer();
+	void stopMixer();
+	void setMixerVolume(byte volume) { _mixVolume = volume; }
 	void resetChannel(uint channel);
 	void resetChannels();
 	void setChannelData(uint channel, const byte *data, uint16 startOffset, uint16 endOffset, uint16 loopLength = 0);
@@ -84,6 +85,7 @@ private:
 	bool _isPlaying;
 	const Mode _mode;
 	Channel _mixChannels[kChannels];
+	byte _mixVolume;
 };
 
 template <typename T>
@@ -92,18 +94,19 @@ Mixer_Mac<T>::Mixer_Mac(Mixer_Mac::Mode mode) :
 	_samplesPerTick(0),
 	_mode(mode),
 	_isPlaying(false),
-	_mixChannels() {}
+	_mixChannels(),
+	_mixVolume(8) {}
 
 template <typename T>
-void Mixer_Mac<T>::start() {
-	_nextTick = _samplesPerTick = uintToUfrac(getRate() / kBaseFreq) + uintToUfrac(getRate() % kBaseFreq) / kBaseFreq;
+void Mixer_Mac<T>::startMixer() {
+	_nextTick = _samplesPerTick = uintToUfrac(getRate() / kInterruptFreq) + uintToUfrac(getRate() % kInterruptFreq) / kInterruptFreq;
 
 	resetChannels();
 	_isPlaying = true;
 }
 
 template <typename T>
-void Mixer_Mac<T>::stop() {
+void Mixer_Mac<T>::stopMixer() {
 	resetChannels();
 	_isPlaying = false;
 }
@@ -175,7 +178,7 @@ void Mixer_Mac<T>::generateSamples(int16 *data, int len) {
 					mixL += sample / 63;
 				}
 			} else {
-				mixL += static_cast<T *>(this)->applyVelocity(ch.volume, ch.data[curOffset]) << 8;
+				mixL += static_cast<T *>(this)->applyChannelVolume(ch.volume, ch.data[curOffset]) << 8;
 			}
 
 			ch.pos += ch.step;
@@ -192,9 +195,9 @@ void Mixer_Mac<T>::generateSamples(int16 *data, int len) {
 			}
 		}
 
-		*data++ = (int16)CLIP<int32>(mixL, -32768, 32767);
+		*data++ = (int16)CLIP<int32>(mixL, -32768, 32767) * _mixVolume / 8;
 		if (mode == kModeHqStereo)
-			*data++ = (int16)CLIP<int32>(mixR, -32768, 32767);
+			*data++ = (int16)CLIP<int32>(mixR, -32768, 32767) * _mixVolume / 8;
 	}
 }
 

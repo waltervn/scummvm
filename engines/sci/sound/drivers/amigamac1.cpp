@@ -885,7 +885,7 @@ public:
 	void close() override;
 
 	// Mixer_Mac
-	static int8 applyVelocity(byte velocity, byte sample);
+	static int8 applyChannelVolume(byte velocity, byte sample);
 	void interrupt();
 	void onChannelFinished(uint channel);
 
@@ -936,7 +936,7 @@ int MidiPlayer_Mac1::open(ResourceManager *resMan) {
 	for (byte ci = 0; ci < MIDI_CHANNELS; ++ci)
 		_channels.push_back(new MidiPlayer_AmigaMac1::Channel(*this));
 
-	start();
+	startMixer();
 	_mixer->playStream(Audio::Mixer::kPlainSoundType, &_mixerSoundHandle, this, -1, _mixer->kMaxChannelVolume, 0, DisposeAfterUse::NO);
 
 	_isOpen = true;
@@ -946,7 +946,7 @@ int MidiPlayer_Mac1::open(ResourceManager *resMan) {
 
 void MidiPlayer_Mac1::close() {
 	MidiPlayer_AmigaMac1::close();
-	stop();
+	stopMixer();
 }
 
 void MidiPlayer_Mac1::interrupt() {
@@ -1058,8 +1058,8 @@ int MidiPlayer_Mac1::euclDivide(int x, int y) {
 		return x / y;
 }
 
-int8 MidiPlayer_Mac1::applyVelocity(byte velocity, byte sample) {
-	return euclDivide((sample - 0x80) * velocity, 63);
+int8 MidiPlayer_Mac1::applyChannelVolume(byte volume, byte sample) {
+	return euclDivide((sample - 0x80) * volume, 63);
 }
 
 class MidiPlayer_Amiga1 : public MidiPlayer_AmigaMac1, public Audio::Paula {
