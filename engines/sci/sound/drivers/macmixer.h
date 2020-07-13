@@ -55,6 +55,7 @@ public:
 	void setMixerVolume(byte volume) { _mixVolume = volume; }
 	void resetChannel(uint channel);
 	void resetChannels();
+	// NOTE: Last sample accessed is data[endOffset + 1] in kModeHq(Stereo)
 	void setChannelData(uint channel, const byte *data, uint16 startOffset, uint16 endOffset, uint16 loopLength = 0);
 	void setChannelStep(uint channel, ufrac_t step);
 	void setChannelVolume(uint channel, byte volume);
