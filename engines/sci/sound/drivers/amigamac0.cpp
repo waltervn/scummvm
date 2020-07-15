@@ -379,12 +379,16 @@ private:
 
 	bool loadInstruments(Common::SeekableReadStream &patch);
 
-	static const uint32 _freqTable[84];
+	ufrac_t _stepTable[84];
 };
 
 MidiPlayer_Mac0::MidiPlayer_Mac0(SciVersion version, Audio::Mixer *mixer, Mixer_Mac<MidiPlayer_Mac0>::Mode mode) :
 	MidiPlayer_AmigaMac0(version, mixer),
-	Mixer_Mac(mode) {}
+	Mixer_Mac(mode) {
+
+	for (uint i = 0; i < ARRAYSIZE(_stepTable); ++i)
+		_stepTable[i] = round(0x2000 * pow(2.0, i / 12.0));
+}
 
 int MidiPlayer_Mac0::open(ResourceManager *resMan) {
 	if (_isOpen)
@@ -459,10 +463,10 @@ void MidiPlayer_Mac0::MacVoice::calcVoiceStep() {
 	while (index < 0)
 		index += 12;
 
-	while (index >= ARRAYSIZE(_freqTable))
+	while (index >= ARRAYSIZE(_stepTable))
 		index -= 12;
 
-	_macDriver.setChannelStep(_id, _freqTable[index]);
+	_macDriver.setChannelStep(_id, _macDriver._stepTable[index]);
 }
 
 void MidiPlayer_Mac0::MacVoice::setEnvelopeVolume(byte volume) {
@@ -591,30 +595,6 @@ bool MidiPlayer_Mac0::loadInstruments(Common::SeekableReadStream &patch) {
 
 	return true;
 }
-
-const uint32 MidiPlayer_Mac0::_freqTable[84] = {
-	0x00002000, 0x000021e7, 0x000023eb, 0x0000260e,
-	0x00002851, 0x00002ab7, 0x00002d41, 0x00002ff2,
-	0x000032cc, 0x000035d1, 0x00003904, 0x00003c68,
-	0x00004000, 0x000043ce, 0x000047d6, 0x00004c1c,
-	0x000050a3, 0x0000556e, 0x00005a82, 0x00005fe4,
-	0x00006598, 0x00006ba2, 0x00007209, 0x000078d1,
-	0x00008000, 0x0000879c, 0x00008fad, 0x00009838,
-	0x0000a145, 0x0000aadc, 0x0000b505, 0x0000bfc9,
-	0x0000cb30, 0x0000d745, 0x0000e412, 0x0000f1a2,
-	0x00010000, 0x00010f39, 0x00011f5a, 0x00013070,
-	0x0001428a, 0x000155b8, 0x00016a0a, 0x00017f91,
-	0x00019660, 0x0001ae8a, 0x0001c824, 0x0001e343,
-	0x00020000, 0x00021e72, 0x00023eb3, 0x000260e0,
-	0x00028514, 0x0002ab70, 0x0002d414, 0x0002ff22,
-	0x00032cc0, 0x00035d14, 0x00039048, 0x0003c687,
-	0x00040000, 0x00043ce4, 0x00047d67, 0x0004c1c0,
-	0x00050a29, 0x000556e0, 0x0005a828, 0x0005fe44,
-	0x00065980, 0x0006ba28, 0x00072090, 0x00078d0e,
-	0x00080000, 0x000879c8, 0x0008facd, 0x0009837f,
-	0x000a1451, 0x000aadc1, 0x000b504f, 0x000bfc88,
-	0x000cb2ff, 0x000d7450, 0x000e411f, 0x000f1a1c
-};
 
 static const uint16 periodTable[] = {
 	0x3bb9, 0x3ade, 0x3a05, 0x3930, 0x385e, 0x378f, 0x36c3, 0x35fa,
