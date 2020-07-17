@@ -645,7 +645,7 @@ private:
 		void stop() override;
 		void setEnvelopeVolume(byte volume) override;
 
-		bool calcVoiceStep();
+		void calcVoiceStep();
 
 		MidiPlayer_Amiga0 &_amigaDriver;
 	};
@@ -654,13 +654,20 @@ private:
 	bool _isEarlyDriver;
 
 	bool loadInstruments(Common::SeekableReadStream &patch);
+
+	uint16 _periodTable[333];
 };
 
 MidiPlayer_Amiga0::MidiPlayer_Amiga0(SciVersion version, Audio::Mixer *mixer) :
 	MidiPlayer_AmigaMac0(version, mixer),
 	Audio::Paula(true, mixer->getOutputRate(), mixer->getOutputRate() / kBaseFreq),
 	_defaultInstrument(0),
-	_isEarlyDriver(false) {}
+	_isEarlyDriver(false) {
+
+	// These values are close, but not identical to the original
+	for (int i = 0; i < ARRAYSIZE(_periodTable); ++i)
+		_periodTable[i] = 3579545 / 20000.0 / pow(2.0, (i - 308) / 48.0);
+}
 
 void MidiPlayer_Amiga0::AmigaVoice::setEnvelopeVolume(byte volume) {
 	// Early games ignore note velocity for envelope-enabled notes
@@ -719,7 +726,7 @@ void MidiPlayer_Amiga0::AmigaVoice::stop() {
 	_amigaDriver.clearVoice(_id);
 }
 
-bool MidiPlayer_Amiga0::AmigaVoice::calcVoiceStep() {
+void MidiPlayer_Amiga0::AmigaVoice::calcVoiceStep() {
 	int8 note = _note;
 
 	if (_instrument->fixedNote)
@@ -743,14 +750,10 @@ bool MidiPlayer_Amiga0::AmigaVoice::calcVoiceStep() {
 
 	index -= 96;
 
-	uint16 period = periodTable[index % 48];
-	period >>= index / 48;
+	while (index >= ARRAYSIZE(_amigaDriver._periodTable))
+		index -= 48;
 
-	if (period == 0)
-		return false;
-
-	_amigaDriver.setChannelPeriod(_id, period);
-	return true;
+	_amigaDriver.setChannelPeriod(_id, _amigaDriver._periodTable[index]);
 }
 
 void MidiPlayer_Amiga0::AmigaVoice::noteOn(int8 note, int8 velocity) {
@@ -773,8 +776,7 @@ void MidiPlayer_Amiga0::AmigaVoice::noteOn(int8 note, int8 velocity) {
 	stop();
 	_envState = 0;
 
-	if (!calcVoiceStep())
-		return;
+	calcVoiceStep();
 
 	const AmigaInstrument *ins = static_cast<const AmigaInstrument *>(_instrument);
 
