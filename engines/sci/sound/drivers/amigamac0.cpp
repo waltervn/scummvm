@@ -396,7 +396,7 @@ int MidiPlayer_Mac0::open(ResourceManager *resMan) {
 
 	Resource *patch = g_sci->getResMan()->findResource(ResourceId(kResourceTypePatch, 200), false);
 	if (!patch) {
-		warning("Could not open patch for Mac SCI0 sound driver");
+		warning("MidiPlayer_Mac0: Failed to open patch 200");
 		return MidiDriver::MERR_DEVICE_NOT_AVAILABLE;
 	}
 
@@ -829,12 +829,12 @@ bool MidiPlayer_Amiga0::loadInstruments(Common::SeekableReadStream &patch) {
 	char name[31];
 
 	if (patch.read(name, 8) < 8 || strncmp(name, "X0iUo123", 8) != 0) {
-		warning("MidiDriver_AmigaSci0: Incorrect ID string in patch bank");
+		warning("MidiPlayer_Amiga0: Incorrect ID string in patch bank");
 		return false;
 	}
 
 	if (patch.read(name, 30) < 30) {
-		warning("MidiDriver_AmigaSci0: Error reading patch bank");
+		warning("MidiPlayer_Amiga0: Error reading patch bank");
 		return false;
 	}
 	name[30] = 0;
@@ -846,7 +846,7 @@ bool MidiPlayer_Amiga0::loadInstruments(Common::SeekableReadStream &patch) {
 	const uint16 instrumentCount = patch.readUint16BE();
 
 	if (instrumentCount == 0) {
-		warning("MidiDriver_AmigaSci0: No instruments found in patch bank");
+		warning("MidiPlayer_Amiga0: No instruments found in patch bank");
 		return false;
 	}
 
@@ -888,7 +888,7 @@ bool MidiPlayer_Amiga0::loadInstruments(Common::SeekableReadStream &patch) {
 		instrument->samples = samples;
 
 		if (patch.eos() || patch.err()) {
-			warning("MidiDriver_AmigaSci0: Error reading patch bank");
+			warning("MidiPlayer_Amiga0: Error reading patch bank");
 			return false;
 		}
 

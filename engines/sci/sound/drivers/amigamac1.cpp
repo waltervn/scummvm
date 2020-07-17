@@ -394,15 +394,7 @@ bool MidiPlayer_AmigaMac1::loadInstruments(Common::SeekableReadStream &patch, bo
 
 			if (!_waves.contains(waveOffset)) {
 				patch.seek(waveOffset);
-				const Wave *wave = loadWave(patch, isEarlyPatch);
-
-				if (!wave) {
-					error("MidiPlayer_AmigaMac1: Failed to read instrument %d", patchIdx);
-					delete instrument;
-					return false;
-				}
-
-				_waves[waveOffset] = wave;
+				_waves[waveOffset] = loadWave(patch, isEarlyPatch);
 			}
 
 			noteRange.wave = _waves[waveOffset];
@@ -920,7 +912,7 @@ int MidiPlayer_Mac1::open(ResourceManager *resMan) {
 
 	const Resource *patch = resMan->findResource(ResourceId(kResourceTypePatch, 7), false);
 	if (!patch) {
-		warning("Could not open patch for Mac SCI1 sound driver");
+		warning("MidiPlayer_Mac1: Failed to open patch 7");
 		return MidiDriver::MERR_DEVICE_NOT_AVAILABLE;
 	}
 
@@ -1113,7 +1105,7 @@ int MidiPlayer_Amiga1::open(ResourceManager *resMan) {
 		patch = resMan->findResource(ResourceId(kResourceTypePatch, 5), false);
 
 		if (!patch) {
-			warning("Could not open patch for Amiga SCI1 sound driver");
+			warning("MidiPlayer_Amiga1: Failed to open patch");
 			return MidiDriver::MERR_DEVICE_NOT_AVAILABLE;
 		}
 
