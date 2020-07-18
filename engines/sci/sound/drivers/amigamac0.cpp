@@ -907,7 +907,7 @@ bool MidiPlayer_Amiga0::loadInstruments(Common::SeekableReadStream &patch) {
 
 MidiPlayer *MidiPlayer_AmigaMac0_create(SciVersion version, Common::Platform platform) {
 	if (platform == Common::kPlatformMacintosh)
-		return new MidiPlayer_Mac0(version, g_system->getMixer(), MidiPlayer_Mac0::kModeHqStereo);
+		return new MidiPlayer_Mac0(version, g_system->getMixer(), MidiPlayer_Mac0::kModeHq);
 	else
 		return new MidiPlayer_Amiga0(version, g_system->getMixer());
 }
