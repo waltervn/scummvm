@@ -3,13 +3,13 @@ MODULE := engines/sci
 MODULE_OBJS := \
 	console.o \
 	decompressor.o \
-	detection.o \
 	event.o \
 	resource.o \
 	resource_audio.o \
 	resource_patcher.o \
 	sci.o \
 	util.o \
+	detection/detection.o \
 	engine/features.o \
 	engine/file.o \
 	engine/gc.o \

@@ -386,7 +386,7 @@ Common::String convertSierraGameId(Common::String sierraId, uint32 *gameFlags, R
 	return sierraId;
 }
 
-#include "sci/detection_tables.h"
+#include "sci/detection/tables.h"
 
 static const ADExtraGuiOptionsMap optionsList[] = {
 	{
