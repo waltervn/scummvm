@@ -251,7 +251,9 @@ enum kLanguage {
 enum kMidiMode {
 	kMidiModeStandard,
 	kMidiModeFB01,
-	kMidiModeD110
+	kMidiModeD110,
+	kMidiModeCSM1,
+	kMidiModeMT540
 };
 
 class SciEngine : public Engine {

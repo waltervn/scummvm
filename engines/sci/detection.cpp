@@ -552,6 +552,14 @@ static const PopUpOptionsMap popUpOptionsList[] = {
 				kMidiModeStandard
 			},
 			{
+				_s("Casio CSM-1 / CT-460"),
+				kMidiModeCSM1
+			},
+			{
+				_s("Casio MT-540"),
+				kMidiModeMT540
+			},
+			{
 				_s("Roland D-110 / D-10 / D-20"),
 				kMidiModeD110
 			},

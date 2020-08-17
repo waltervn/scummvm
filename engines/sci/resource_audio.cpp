@@ -221,6 +221,10 @@ void ResourceManager::addAftermarketPatches(SciGameId gameId) {
 	addAftermarketPatch(gameId, sci1Patches, 4, "GM.PAT");
 	// Roland D-110
 	addAftermarketPatch(gameId, sci0Patches, 0, ".000");
+	// Casio MT-540
+	addAftermarketPatch(gameId, sci0Patches, 4, ".004");
+	// Casio CSM-1 / CT-460
+	addAftermarketPatch(gameId, sci0Patches, 7, ".007");
 }
 
 void ResourceManager::processWavePatch(ResourceId resourceId, const Common::String &name) {

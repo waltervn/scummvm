@@ -111,6 +111,8 @@ void SciMusic::init() {
 #endif
 	}
 
+	const int midiMode = ConfMan.getInt("midi_mode");
+
 	switch (_musicType) {
 	case MT_ADLIB:
 		// FIXME: There's no Amiga sound option, so we hook it up to AdLib
@@ -138,8 +140,11 @@ void SciMusic::init() {
 		_pMidiDrv = MidiPlayer_PC9801_create(_soundVersion);
 		break;
 	default:
-		if (ConfMan.getInt("midi_mode") == kMidiModeFB01
-		    || (ConfMan.hasKey("native_fb01") && ConfMan.getBool("native_fb01")))
+		if (midiMode == kMidiModeCSM1)
+			_pMidiDrv = MidiPlayer_CasioCSM1_create(_soundVersion);
+		else if (midiMode == kMidiModeMT540)
+			_pMidiDrv = MidiPlayer_CasioMT540_create(_soundVersion);
+		else if (midiMode == kMidiModeFB01 || (ConfMan.hasKey("native_fb01") && ConfMan.getBool("native_fb01")))
 			_pMidiDrv = MidiPlayer_Fb01_create(_soundVersion);
 		else
 			_pMidiDrv = MidiPlayer_Midi_create(_soundVersion);
