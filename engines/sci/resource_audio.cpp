@@ -32,6 +32,39 @@
 
 namespace Sci {
 
+struct AftermarketPatch {
+	const char *fileName;
+	SciGameId id;
+};
+
+#define AFTERMARKET_PATCH_TERMINATOR { nullptr, GID_FANMADE }
+
+static const AftermarketPatch sci1Patches[] = {
+	{ "ECO1", GID_ECOQUEST },
+	{ "HOY3", GID_HOYLE3 },
+	{ "LL1_", GID_LSL1 },
+	{ "LL5_", GID_LSL5 },
+	{ "ROBN", GID_LONGBOW },
+	{ "SQ1_", GID_SQ1 },
+	{ "SQ4_", GID_SQ4 },
+	{ "TALE", GID_FAIRYTALES },
+	AFTERMARKET_PATCH_TERMINATOR
+};
+
+static const AftermarketPatch sci0Patches[]= {
+	{ "CAMELOT", GID_CAMELOT },
+	{ "HOYLE", GID_HOYLE1 },
+	{ "HQ1", GID_QFG1 },
+	{ "ICEMAN", GID_ICEMAN },
+	{ "ICE", GID_ICEMAN },
+	{ "KQ4", GID_KQ4 },
+	{ "LSL2", GID_LSL2 },
+	{ "LSL3", GID_LSL3 },
+	{ "PQ2", GID_PQ2 },
+	{ "SQ3", GID_SQ3 },
+	AFTERMARKET_PATCH_TERMINATOR
+};
+
 AudioVolumeResourceSource::AudioVolumeResourceSource(ResourceManager *resMan, const Common::String &name, ResourceSource *map, int volNum)
 	: VolumeResourceSource(name, map, volNum, kSourceAudioVolume) {
 
@@ -161,84 +194,33 @@ bool Resource::loadFromAudioVolumeSCI1(Common::SeekableReadStream *file) {
 	return true;
 }
 
-void ResourceManager::addNewGMPatch(SciGameId gameId) {
-	Common::String gmPatchFile;
+void ResourceManager::addAftermarketPatch(SciGameId gameId, const AftermarketPatch *patches, uint16 resourceNr, const char *deviceStr) {
+	// If the resource exists already, we don't override it from the extras path
+	if (testResource(ResourceId(kResourceTypePatch, resourceNr)))
+		return;
 
-	switch (gameId) {
-	case GID_ECOQUEST:
-		gmPatchFile = "ECO1GM.PAT";
-		break;
-	case GID_HOYLE3:
-		gmPatchFile = "HOY3GM.PAT";
-		break;
-	case GID_LSL1:
-		gmPatchFile = "LL1_GM.PAT";
-		break;
-	case GID_LSL5:
-		gmPatchFile = "LL5_GM.PAT";
-		break;
-	case GID_LONGBOW:
-		gmPatchFile = "ROBNGM.PAT";
-		break;
-	case GID_SQ1:
-		gmPatchFile = "SQ1_GM.PAT";
-		break;
-	case GID_SQ4:
-		gmPatchFile = "SQ4_GM.PAT";
-		break;
-	case GID_FAIRYTALES:
-		gmPatchFile = "TALEGM.PAT";
-		break;
-	default:
-		break;
-	}
+	while (patches->fileName) {
+		if (patches->id == gameId) {
+			Common::String fileName(patches->fileName);
 
-	if (!gmPatchFile.empty() && Common::File::exists(gmPatchFile)) {
-		ResourceSource *psrcPatch = new PatchResourceSource(gmPatchFile);
-		processPatch(psrcPatch, kResourceTypePatch, 4);
+			if (deviceStr)
+				fileName += deviceStr;
+
+			if (Common::File::exists(fileName)) {
+				ResourceSource *psrcPatch = new PatchResourceSource(fileName);
+				processPatch(psrcPatch, kResourceTypePatch, resourceNr);
+				return;
+			}
+		}
+		++patches;
 	}
 }
 
-void ResourceManager::addNewD110Patch(SciGameId gameId) {
-	Common::String patchFile;
-
-	switch (gameId) {
-	case GID_CAMELOT:
-		patchFile = "CAMELOT.000";
-		break;
-	case GID_HOYLE1:
-		patchFile = "HOYLE.000";
-		break;
-	case GID_QFG1:
-		patchFile = "HQ1.000";
-		break;
-	case GID_ICEMAN:
-		patchFile = "ICEMAN.000"; // Also ICE.000, but let's go with this one
-		break;
-	case GID_KQ4:
-		patchFile = "KQ4.000";
-		break;
-	case GID_LSL2:
-		patchFile = "LSL2.000";
-		break;
-	case GID_LSL3:
-		patchFile = "LSL3.000";
-		break;
-	case GID_PQ2:
-		patchFile = "PQ2.000";
-		break;
-	case GID_SQ3:
-		patchFile = "SQ3.000";
-		break;
-	default:
-		// There's also a CB.000, but unfortunately that file contains an MT-32 patch
-		break;
-	}
-
-	if (!patchFile.empty() && Common::File::exists(patchFile)) {
-		ResourceSource *psrcPatch = new PatchResourceSource(patchFile);
-		processPatch(psrcPatch, kResourceTypePatch, 0);
-	}
+void ResourceManager::addAftermarketPatches(SciGameId gameId) {
+	// General MIDI
+	addAftermarketPatch(gameId, sci1Patches, 4, "GM.PAT");
+	// Roland D-110
+	addAftermarketPatch(gameId, sci0Patches, 0, ".000");
 }
 
 void ResourceManager::processWavePatch(ResourceId resourceId, const Common::String &name) {

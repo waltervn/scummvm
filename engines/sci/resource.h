@@ -146,6 +146,7 @@ enum ResVersion {
 class ResourceManager;
 class ResourceSource;
 class ResourcePatcher;
+struct AftermarketPatch;
 
 class ResourceId {
 	static inline ResourceType fixupType(ResourceType type) {
@@ -408,13 +409,12 @@ public:
 	ResVersion getVolVersion() const { return _volVersion; }
 
 	/**
-	 * Adds the appropriate GM patch from the Sierra MIDI utility as 4.pat, without
-	 * requiring the user to rename the file to 4.pat. Thus, the original Sierra
-	 * archive can be extracted in the extras directory, and the GM patches can be
-	 * applied per game, if applicable.
+	 * Adds appropriate aftermarket patches distributed by Sierra, without
+	 * requiring the user to rename the files. Thus, the original Sierra archives
+	 * can be extracted in the extras directory, and the patches can be applied
+	 * per game, if applicable.
 	 */
-	void addNewGMPatch(SciGameId gameId);
-	void addNewD110Patch(SciGameId gameId);
+	void addAftermarketPatches(SciGameId gameId);
 
 #ifdef ENABLE_SCI32
 	/**
@@ -600,6 +600,8 @@ protected:
 	 */
 	void readResourcePatches();
 	void readResourcePatchesBase36();
+
+	void addAftermarketPatch(SciGameId gameId, const AftermarketPatch *patches, uint16 resourceNr, const char *deviceStr = nullptr);
 
 	/**
 	 * Determines whether or not a patch file matching the given resource ID

@@ -277,8 +277,7 @@ Common::Error SciEngine::run() {
 	_soundCmd = NULL;
 
 	// Add the after market patches for the specified game, if they exist
-	_resMan->addNewGMPatch(_gameId);
-	_resMan->addNewD110Patch(_gameId);
+	_resMan->addAftermarketPatches(_gameId);
 	_gameObjectAddress = _resMan->findGameObject(true, isBE());
 
 	_scriptPatcher = new ScriptPatcher();
