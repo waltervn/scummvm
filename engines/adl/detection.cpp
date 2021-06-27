@@ -148,6 +148,38 @@ static const AdlGameDescription gameFileDescriptions[] = {
 		GAME_TYPE_HIRES1,
 		GAME_VER_HR1_COARSE
 	},
+	{ // Hi-Res Adventure #1: Mystery House - Apple II - French - Earlier release
+		{
+			"hires1", "Malibu Microcomputing [V1]",
+			{
+				{ "ADVENTURE", 0, "6e2245979871b44a9fec46b4b2ba590a", 29952 },
+				{ "AUTO LOAD OBJ", 0, "3d417e923e70abe9a82e51155974027d", 12288 },
+				AD_LISTEND
+			},
+			Common::FR_FRA,
+			Common::kPlatformApple2,
+			ADGF_NO_FLAGS,
+			MH_OPTIONS
+		},
+		GAME_TYPE_HIRES1,
+		GAME_VER_HR1_MALIBU_V1
+	},
+	{ // Hi-Res Adventure #1: Mystery House - Apple II - French - Later release
+		{
+			"hires1", "Malibu Microcomputing [V2]",
+			{
+				{ "ADVENTURE", 0, "f9a1add3609b4bc24b5dc4a9db1fec67", 29952 },
+				{ "AUTO LOAD OBJ", 0, "2a348058363da4c78a069ee5a2d81a31", 12287 },
+				AD_LISTEND
+			},
+			Common::FR_FRA,
+			Common::kPlatformApple2,
+			ADGF_NO_FLAGS,
+			MH_OPTIONS
+		},
+		GAME_TYPE_HIRES1,
+		GAME_VER_HR1_MALIBU_V2
+	},
 	{ // Hi-Res Adventure #1: Mystery House - Apple II - Roberta Williams Anthology
 		{
 			"hires1", 0,
@@ -180,6 +212,18 @@ static const AdlGameDescription gameDiskDescriptions[] = {
 		},
 		GAME_TYPE_HIRES1,
 		GAME_VER_HR1_COARSE
+	},
+	{ // Hi-Res Adventure #1: Mystery House - Apple II - French - Later release
+		{
+			"hires1", "Malibu Microcomputing [V2]",
+			AD_ENTRY1s("mysthous", "7bd1918ffc28e551e5b3baf610982bd3", 116480),
+			Common::FR_FRA,
+			Common::kPlatformApple2,
+			ADGF_NO_FLAGS,
+			MH_OPTIONS
+		},
+		GAME_TYPE_HIRES1,
+		GAME_VER_HR1_MALIBU_V2
 	},
 	{ // Hi-Res Adventure #1: Mystery House - Apple II - Roberta Williams Anthology
 		{

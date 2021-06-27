@@ -275,9 +275,10 @@ protected:
 	void delay(uint32 ms) const;
 
 	virtual Common::String getLine();
+	Common::String getWord(const Common::String &line, uint &index) const;
 	Common::String inputString(byte prompt = 0) const;
 	byte inputKey(bool showCursor = true) const;
-	void getInput(uint &verb, uint &noun);
+	virtual void getInput(uint &verb, uint &noun);
 
 	virtual Common::String formatVerbError(const Common::String &verb) const;
 	virtual Common::String formatNounError(const Common::String &verb, const Common::String &noun) const;
@@ -456,7 +457,6 @@ private:
 
 	// Text input
 	byte convertKey(uint16 ascii) const;
-	Common::String getWord(const Common::String &line, uint &index) const;
 
 	byte _saveVerb, _saveNoun, _restoreVerb, _restoreNoun;
 };

@@ -53,7 +53,13 @@ enum GameType {
  * GAME_VER_HR1_PD:
  * - Public Domain disclaimer on startup
  * - Sierra On-Line title screen with instructions prompt
- *
+ * GAME_VER_HR1_MALIBU_V1:
+ * - Early French release (or beta?) that credits Tom Malevanko
+ * - Binary is similar to GAME_VER_HR1_COARSE
+ * GAME_VER_HR1_MALIBU_V2:
+ * - Later French release that credits Tom Nalevanko (note the N)
+ * - Instructions prompt does not require Return to be pressed
+ * - Several changes to the parser
  * Note: there are probably at least two or three more variants
  */
 
@@ -61,7 +67,9 @@ enum GameVersion {
 	GAME_VER_NONE = 0,
 	GAME_VER_HR1_SIMI = 0,
 	GAME_VER_HR1_COARSE,
-	GAME_VER_HR1_PD
+	GAME_VER_HR1_PD,
+	GAME_VER_HR1_MALIBU_V1,
+	GAME_VER_HR1_MALIBU_V2
 };
 
 struct AdlGameDescription {
