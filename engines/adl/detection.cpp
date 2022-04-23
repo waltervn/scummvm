@@ -117,6 +117,7 @@ static const PlainGameDescriptor adlGames[] = {
 	{ "hires0", "Hi-Res Adventure #0: Mission Asteroid" },
 	{ "hires1", "Hi-Res Adventure #1: Mystery House" },
 	{ "hires2", "Hi-Res Adventure #2: Wizard and the Princess" },
+	{ "serenia", "Adventure in Serenia" },
 	{ "hires3", "Hi-Res Adventure #3: Cranston Manor" },
 	{ "hires4", "Hi-Res Adventure #4: Ulysses and the Golden Fleece" },
 	{ "hires5", "Hi-Res Adventure #5: Time Zone" },
@@ -339,6 +340,18 @@ static const AdlGameDescription gameDiskDescriptions[] = {
 			AD_ENTRY1s("wizard", "72b114bf8f94fafe5672daac2a70c765", 143360),
 			Common::EN_ANY,
 			Common::kPlatformApple2,
+			ADGF_NO_FLAGS,
+			DEFAULT_OPTIONS
+		},
+		GAME_TYPE_HIRES2,
+		GAME_VER_NONE
+	},
+	{ // Adventure in Serenia - PC Booter
+		{
+			"serenia", "IBM",
+			AD_ENTRY1s("serenia", "30d91f5633f5f4e0231668ad87639e51", 163840),
+			Common::EN_ANY,
+			Common::kPlatformDOS,
 			ADGF_NO_FLAGS,
 			DEFAULT_OPTIONS
 		},
